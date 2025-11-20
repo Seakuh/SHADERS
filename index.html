@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shader MIDI Player</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        body {
+            background: #000;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #info {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: monospace;
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            pointer-events: none;
+            z-index: 1000;
+            max-width: 400px;
+        }
+
+        #info.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <div>Current Shader: <span id="current-shader">Loading...</span></div>
+        <div>MIDI Device: <span id="midi-device">Not connected</span></div>
+        <div>Hue: <span id="hue-value">0</span></div>
+        <div>Saturation: <span id="sat-value">1.0</span></div>
+        <div>Lightness: <span id="light-value">1.0</span></div>
+        <div>Monochrome: <span id="mono-value">0.0</span></div>
+        <div style="margin-top: 5px; font-size: 10px; opacity: 0.7;">Press 'H' to toggle info</div>
+    </div>
+    <script type="module" src="/main.js"></script>
+</body>
+</html>
