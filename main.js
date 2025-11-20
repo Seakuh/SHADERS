@@ -101,12 +101,19 @@ class MIDIController {
 
         // MIDI Mappings
         this.mappings = {
+            // -------------- FADER CONTROLS --------------
+            vibrance: { type: 'cc', value: 0 },            // CC0 - Vibrance
             hue: { type: 'cc', value: 1 },                // CC1 - Hue rotation
             saturation: { type: 'cc', value: 2 },         // CC2 - Saturation
+            grayscale: { type: 'cc', value: 3 },            // CC3 - Grayscale
+            contrast: { type: 'cc', value: 4 },            // CC4 - Contrast
+            brightness: { type: 'cc', value: 5 },            // CC5 - Brightness
+            zoom: { type: 'cc', value: 6 },               // CC5 - Zoom
+            speed: { type: 'cc', value: 16 },             // CC16 - Speed
+
+            // -------------- SHADER NAVIGATION --------------
             shaderPrev: { type: 'cc', value: 43 },         // CC3 - Previous shader
             shaderNext: { type: 'cc', value: 44 },         // CC4 - Next shader
-            zoom: { type: 'cc', value: 5 },               // CC5 - Zoom
-            speed: { type: 'cc', value: 16 },             // CC16 - Speed
             mirror: { type: 'cc', value: 48 },            // CC60 - Mirror toggle (threshold 0.5)
         };
     }
@@ -272,6 +279,22 @@ class MIDIController {
         } else if (cc === this.mappings.saturation.value) {
             this.onParameterChange('saturation', value);
             this.updateUI('sat-value', value.toFixed(2));
+        } else if (cc === this.mappings.grayscale.value) {
+            this.onParameterChange('grayscale', value);
+            this.updateUI('gray-value', value.toFixed(2));
+        } else if (cc === this.mappings.contrast.value) {
+            // Map 0-1 to 0-2 for contrast range
+            const contrast = value * 2.0;
+            this.onParameterChange('contrast', contrast);
+            this.updateUI('contrast-value', contrast.toFixed(2));
+        } else if (cc === this.mappings.brightness.value) {
+            // Map 0-1 to 0-2 for brightness range
+            const brightness = value * 2.0;
+            this.onParameterChange('brightness', brightness);
+            this.updateUI('bright-value', brightness.toFixed(2));
+        } else if (cc === this.mappings.vibrance.value) {
+            this.onParameterChange('vibrance', value);
+            this.updateUI('vib-value', value.toFixed(2));
         } else if (cc === this.mappings.shaderNext.value) {
             if (value > 0.5) {  // Trigger on values above threshold
                 this.onShaderChange('next');
@@ -319,8 +342,12 @@ class ShaderRenderer {
 
         // Post-processing uniforms (global effects)
         this.globalUniforms = {
+            u_vibrance: 0.0,
             u_hue: 0.0,
             u_saturation: 1.0,
+            u_grayscale: 0.0,
+            u_contrast: 1.0,
+            u_brightness: 1.0,
             u_zoom: 1.0,
             u_speed: 1.0,
             u_mirror: 0.0
@@ -346,8 +373,12 @@ class ShaderRenderer {
             uniform int iFrame;
 
             // Global controls
+            uniform float u_vibrance;
             uniform float u_hue;
             uniform float u_saturation;
+            uniform float u_grayscale;
+            uniform float u_contrast;
+            uniform float u_brightness;
             uniform float u_zoom;
             uniform float u_speed;
             uniform float u_mirror;
@@ -420,8 +451,16 @@ class ShaderRenderer {
                 // Call the user's mainImage function with modified coordinates
                 mainImage(color, fragCoord);
 
-                // Apply global color transformations
-                vec3 hsl = rgb2hsl(color.rgb);
+                vec3 finalColor = color.rgb;
+
+                // Apply brightness
+                finalColor *= u_brightness;
+
+                // Apply contrast
+                finalColor = (finalColor - 0.5) * u_contrast + 0.5;
+
+                // Apply global color transformations via HSL
+                vec3 hsl = rgb2hsl(finalColor);
 
                 // Apply hue rotation
                 hsl.x = mod(hsl.x + u_hue / 360.0, 1.0);
@@ -429,7 +468,15 @@ class ShaderRenderer {
                 // Apply saturation adjustment
                 hsl.y *= u_saturation;
 
-                vec3 finalColor = hsl2rgb(hsl);
+                // Apply vibrance (boost less saturated colors more)
+                float satBoost = (1.0 - hsl.y) * u_vibrance;
+                hsl.y = clamp(hsl.y + satBoost, 0.0, 1.0);
+
+                finalColor = hsl2rgb(hsl);
+
+                // Apply grayscale
+                float gray = dot(finalColor, vec3(0.299, 0.587, 0.114));
+                finalColor = mix(finalColor, vec3(gray), u_grayscale);
 
                 gl_FragColor = vec4(finalColor, color.a);
             }
@@ -449,8 +496,12 @@ class ShaderRenderer {
                 iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
                 iTimeDelta: { value: 0 },
                 iFrame: { value: 0 },
+                u_vibrance: { value: this.globalUniforms.u_vibrance },
                 u_hue: { value: this.globalUniforms.u_hue },
                 u_saturation: { value: this.globalUniforms.u_saturation },
+                u_grayscale: { value: this.globalUniforms.u_grayscale },
+                u_contrast: { value: this.globalUniforms.u_contrast },
+                u_brightness: { value: this.globalUniforms.u_brightness },
                 u_zoom: { value: this.globalUniforms.u_zoom },
                 u_speed: { value: this.globalUniforms.u_speed },
                 u_mirror: { value: this.globalUniforms.u_mirror }

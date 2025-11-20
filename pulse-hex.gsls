@@ -1,0 +1,160 @@
+// based on "An introduction to Shader Art Coding" by kishimisu: 
+// https://www.youtube.com/watch?v=f4s1h2YETNY
+
+
+
+// ==========================================================================================
+// Utility & math
+
+// Normalize pixel coordinates (XY to UV).
+vec2 get_uv(in vec2 position)
+{
+    return (position * 2.0 - iResolution.xy) / iResolution.y;
+}
+// Map value from [min1, max1] to [min2, max2]
+float map(in float value, in float min1, in float max1, in float min2, in float max2) 
+{
+  return min2 + (value - min1) * (max2 - min2) / (max1 - min1);
+}
+// Map value in [min, max] to [0,1]
+float map_01(in float value, in float min, in float max)
+{
+    return map(value, min, max, 0.0, 1.0);
+}
+// Map triginometric function value to [min, max]
+float map_tri(in float value, in float min, in float max)
+{
+    return map(value, -1.0, 1.0, min, max);
+}
+// Map triginometric function value to [0, 1]
+float map_tri_01(in float value)
+{
+    return map_tri(value, 0.0, 1.0);
+}
+// SDF for a hexagon with position p and radius r, from https://iquilezles.org/articles/distfunctions2d/
+float sdHexagon(in vec2 p, in float r)
+{
+    const vec3 k = vec3(-0.866025404, 0.5, 0.577350269);
+    p = abs(p);
+    p -= 2.0*min(dot(k.xy, p), 0.0)*k.xy;
+    p -= vec2(clamp(p.x, -k.z*r, k.z*r), r);
+    return length(p)*sign(p.y);
+}
+// Returns the current position between two beats as a float between 0 and 1 with smoothing.
+float beat(in float bpm)
+{
+    return smoothstep(0.5, 1.0, sqrt(1.0 - mod(iTime, 60.0 / bpm)));
+}
+// Sample a BPM synced oscillator.
+float beat_osc(in float bpm, in float min, in float max, in float speed, in float offset)
+{
+    const float two_pi = 2.0 * 3.14159265;
+    return map_tri(cos(offset * two_pi + speed * iTime * bpm / 60.0 * two_pi), min, max);
+}
+
+// ==========================================================================================
+// Color palettes, see https://iquilezles.org/articles/palettes/
+
+// Sample a color gradient with parameters (a, b, c, d) at position t.
+vec3 palette(in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d)
+{
+    return a + b * cos(6.28318 * (c * t + d));
+}
+// Sample a neon palette at position t.
+vec3 palette_neon(in float t)
+{
+    return palette(t, vec3(0.5), vec3(0.5), vec3(1.0), vec3(0.263, 0.416, 0.557));
+}
+// Sample a spectrum palette at position t.
+vec3 palette_spectrum(in float t)
+{
+    return palette(t, vec3(0.5), vec3(0.5), vec3(2.0, 1.0, 0.0), vec3(0.5, 0.2, 0.25));
+}
+// Sample from multiple palettes at position t and add colors with mix ratio p.
+vec3 mix_palettes(in float t, in float p)
+{
+    float p1 = p;
+    float p2 = 1.0 - p;
+    return p1 * palette_neon(t) + p2 * palette_spectrum(t);
+}
+
+// ==========================================================================================
+// Main
+
+// Creates a fractal hexagon pattern that sweeps through color gradients.
+// Basically kishimisus algorithm (see video) with many control parameters.
+vec3 hexagons(
+    in vec2 position,
+    in float scale,
+    in float density,
+    in float lineWidth,
+    in float iterations,
+    in float offset,
+    in float colorMix
+)
+{
+    vec3 color = vec3(0.0);
+    vec2 uv = get_uv(position);
+    vec2 uv0 = uv;
+    for (float i = 0.0; i < iterations; i++) {
+        uv = fract(uv * scale) - 0.5;
+        float d0 = sdHexagon(uv0, 1.0);
+        float d = sdHexagon(uv, 1.0);
+        d = sin(d * density + offset) / density;
+        d = abs(d);
+        d = (0.0025 * lineWidth) / d;
+        d = smoothstep(0.0, 0.3, d);
+
+        vec3 c = mix_palettes(d0 + offset, colorMix);
+        color += c * d;
+    }
+    return color;
+}
+
+// Create interesting layers of the hexagon pattern synced to a given BPM.
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    const float bpm = 174. / 2. ;
+    vec3 color = vec3(0.0);
+    vec3 layerBackground = hexagons(
+        fragCoord,
+        beat_osc(bpm, 2.95, 3.05, 1.0 / 16.0, 0.0),
+        beat_osc(bpm, 12.0, 15.0, 1.0 / 16.0, 0.1),
+        3.0,
+        2.0,
+        -iTime * 0.125,
+        beat_osc(bpm, 0.5, 1.0, 1.0 / 8.0, 0.0)
+    );
+    vec3 layerBackgroundMask = hexagons(
+        fragCoord,
+        beat_osc(bpm, 1.0, 2.0, 0.0, 0.0),
+        5.0,
+        4.0,
+        1.25,
+        -iTime * 0.25,
+        beat_osc(bpm, 0.0, 1.0, 0.5, 0.0)
+    );
+    vec3 layerMid = hexagons(
+        fragCoord,
+        1.5,
+        beat_osc(bpm, 17.5, 18.0, 0.25, 0.0),
+        0.5,
+        1.0,
+        -iTime * 0.5,
+        beat_osc(bpm, 0.0, 1.0, 0.125, 0.0)
+    );
+    vec3 LayerForeground = hexagons(
+        fragCoord,
+        beat_osc(bpm, 0.6, 0.7, 1.0 / 32.0, 0.0),
+        beat_osc(bpm, 12.0, 16.0, 1.0 / 64., 0.0),
+        2.0,
+        2.0,
+        -iTime * 0.25,
+        beat_osc(bpm, 0.0, 1.0, 1.0 / 32., 0.0)
+    );
+    color += layerBackground * layerBackgroundMask;
+    color += layerMid * beat(bpm) * 0.5;
+    color += LayerForeground * beat(bpm);
+
+    fragColor.xyz = color;
+}
