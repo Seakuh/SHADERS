@@ -28,10 +28,9 @@
             color: white;
             font-family: monospace;
             font-size: 12px;
-            background: rgba(0, 0, 0, 0.5);
+            background: rgba(0, 0, 0, 0.8);
             padding: 10px;
             border-radius: 5px;
-            pointer-events: none;
             z-index: 1000;
             max-width: 400px;
         }
@@ -39,17 +38,50 @@
         #info.hidden {
             display: none;
         }
+
+        #midi-selector {
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 3px;
+            padding: 5px;
+            margin-top: 5px;
+            font-family: monospace;
+            font-size: 11px;
+            cursor: pointer;
+            pointer-events: auto;
+        }
+
+        #midi-selector option {
+            background: #222;
+            color: white;
+        }
+
+        .info-row {
+            pointer-events: none;
+        }
+
+        .info-interactive {
+            pointer-events: auto;
+        }
     </style>
 </head>
 <body>
     <div id="info">
-        <div>Current Shader: <span id="current-shader">Loading...</span></div>
-        <div>MIDI Device: <span id="midi-device">Not connected</span></div>
-        <div>Hue: <span id="hue-value">0</span></div>
-        <div>Saturation: <span id="sat-value">1.0</span></div>
-        <div>Lightness: <span id="light-value">1.0</span></div>
-        <div>Monochrome: <span id="mono-value">0.0</span></div>
-        <div style="margin-top: 5px; font-size: 10px; opacity: 0.7;">Press 'H' to toggle info</div>
+        <div class="info-row">Current Shader: <span id="current-shader">Loading...</span></div>
+        <div class="info-interactive" style="margin-top: 8px;">
+            <div style="margin-bottom: 3px;">MIDI Input:</div>
+            <select id="midi-selector">
+                <option value="">No MIDI devices</option>
+            </select>
+        </div>
+        <div class="info-row" style="margin-top: 8px;">Speed: <span id="speed-value">1.00</span></div>
+        <div class="info-row">Zoom: <span id="zoom-value">1.00</span></div>
+        <div class="info-row">Mirror: <span id="mirror-value">OFF</span></div>
+        <div class="info-row">Hue: <span id="hue-value">0</span></div>
+        <div class="info-row">Saturation: <span id="sat-value">1.0</span></div>
+        <div class="info-row" style="margin-top: 5px; font-size: 10px; opacity: 0.7;">Press 'H' to toggle info</div>
+        <div id="last-midi-event" class="info-row" style="margin-top: 8px; font-size: 10px; color: #0f0; opacity: 0.8;"></div>
     </div>
     <script type="module" src="/main.js"></script>
 </body>

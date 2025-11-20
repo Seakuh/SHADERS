@@ -34,18 +34,19 @@ Der Server läuft auf `http://localhost:5173`
 
 | MIDI Event | Funktion | Details |
 |------------|----------|---------|
-| **Note C4 (60)** | Nächster Shader | Wechselt zum nächsten Shader in der Liste |
-| **Note B3 (59)** | Vorheriger Shader | Wechselt zum vorherigen Shader |
-| **Note 0-127** | Direktwahl | Beliebige Note mappt proportional auf Shader-Index |
+| **Note 0-127** | Shader-Auswahl | Beliebige Note mappt proportional auf Shader-Index |
+| **CC 3** | Vorheriger Shader | Werte > 64 triggern Shader-Wechsel |
+| **CC 4** | Nächster Shader | Werte > 64 triggern Shader-Wechsel |
 
-### Globale Farbparameter
+### Globale Parameter
 
 | MIDI CC | Parameter | Wertebereich | Funktion |
 |---------|-----------|--------------|----------|
 | **CC 1** | Hue | 0-360° | Verschiebt den Farbton |
 | **CC 2** | Saturation | 0.0-1.0 | Steuert die Farbsättigung |
-| **CC 3** | Lightness | 0.0-1.0 | Steuert die Helligkeit |
-| **CC 4** | Monochrome | 0.0-1.0 | Mischt zu Graustufen (0=Farbe, 1=Grau) |
+| **CC 5** | Zoom | 0.1-5.0 | Zoomt den Shader (1.0 = normal) |
+| **CC 16** | Speed | 0-4x | Geschwindigkeit der Animation |
+| **CC 60** | Mirror | ON/OFF | Horizontale Spiegelung (> 64 = AN) |
 
 ## Tastatursteuerung
 
@@ -75,14 +76,15 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 - `iTimeDelta` - Zeit seit letztem Frame
 - `iFrame` - Frame-Nummer
 
-## Globale Farbeffekte
+## Globale Effekte
 
 Alle Shader werden automatisch mit einem Post-Processing-Wrapper versehen, der folgende Effekte ermöglicht:
 
-1. **Hue Rotation**: Verschiebt alle Farben im Farbkreis
-2. **Saturation**: Verstärkt oder reduziert die Farbintensität
-3. **Lightness**: Macht das Bild heller oder dunkler
-4. **Monochrome**: Konvertiert zu Graustufen
+1. **Speed**: Steuert die Animations-Geschwindigkeit (0-4x, iTime wird multipliziert)
+2. **Zoom**: Vergrößert/verkleinert den Shader vom Zentrum aus (0.1-5.0x)
+3. **Mirror**: Spiegelt die rechte Hälfte horizontal zur linken
+4. **Hue Rotation**: Verschiebt alle Farben im Farbkreis (0-360°)
+5. **Saturation**: Verstärkt oder reduziert die Farbintensität (0-1)
 
 Diese Effekte sind **unabhängig vom Shader** und können via MIDI in Echtzeit gesteuert werden.
 
@@ -147,12 +149,13 @@ In `main.js` findest du die MIDI-Mappings in der `MIDIController` Klasse:
 
 ```javascript
 this.mappings = {
-    shaderNext: { type: 'note', value: 60 },      // C4
-    shaderPrev: { type: 'note', value: 59 },      // B3
-    hue: { type: 'cc', value: 1 },                // CC1
-    saturation: { type: 'cc', value: 2 },         // CC2
-    lightness: { type: 'cc', value: 3 },          // CC3
-    monochrome: { type: 'cc', value: 4 },         // CC4
+    hue: { type: 'cc', value: 1 },                // CC1 - Hue rotation
+    saturation: { type: 'cc', value: 2 },         // CC2 - Saturation
+    shaderPrev: { type: 'cc', value: 3 },         // CC3 - Previous shader
+    shaderNext: { type: 'cc', value: 4 },         // CC4 - Next shader
+    zoom: { type: 'cc', value: 5 },               // CC5 - Zoom
+    speed: { type: 'cc', value: 16 },             // CC16 - Speed
+    mirror: { type: 'cc', value: 60 },            // CC60 - Mirror toggle
 };
 ```
 

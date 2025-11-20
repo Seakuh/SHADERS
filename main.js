@@ -96,91 +96,171 @@ class MIDIController {
     constructor(onShaderChange, onParameterChange) {
         this.onShaderChange = onShaderChange;
         this.onParameterChange = onParameterChange;
-        this.connected = false;
+        this.currentInput = null;
+        this.selector = null;
 
         // MIDI Mappings
         this.mappings = {
-            shaderNext: { type: 'note', value: 60 },      // C4 - Next shader
-            shaderPrev: { type: 'note', value: 59 },      // B3 - Previous shader
             hue: { type: 'cc', value: 1 },                // CC1 - Hue rotation
             saturation: { type: 'cc', value: 2 },         // CC2 - Saturation
-            lightness: { type: 'cc', value: 3 },          // CC3 - Lightness
-            monochrome: { type: 'cc', value: 4 },         // CC4 - Monochrome amount
+            shaderPrev: { type: 'cc', value: 43 },         // CC3 - Previous shader
+            shaderNext: { type: 'cc', value: 44 },         // CC4 - Next shader
+            zoom: { type: 'cc', value: 5 },               // CC5 - Zoom
+            speed: { type: 'cc', value: 16 },             // CC16 - Speed
+            mirror: { type: 'cc', value: 48 },            // CC60 - Mirror toggle (threshold 0.5)
         };
     }
 
     async init() {
         try {
+            this.selector = document.getElementById('midi-selector');
+
             await WebMidi.enable();
             Logger.midi('WebMIDI enabled successfully');
 
-            WebMidi.inputs.forEach((input, index) => {
-                Logger.midi(`Input ${index}: ${input.name}`);
-            });
+            // Update device list
+            this.updateDeviceList();
 
+            // Setup selector change handler
+            if (this.selector) {
+                this.selector.addEventListener('change', (e) => {
+                    const inputId = e.target.value;
+                    if (inputId) {
+                        const input = WebMidi.getInputById(inputId);
+                        if (input) {
+                            this.connectToInput(input);
+                        }
+                    }
+                });
+            }
+
+            // Auto-connect to first device if available
             if (WebMidi.inputs.length > 0) {
-                const input = WebMidi.inputs[0];
-                this.connectToInput(input);
+                this.connectToInput(WebMidi.inputs[0]);
             } else {
-                Logger.midi('No MIDI inputs found. Waiting for device...');
+                Logger.midi('No MIDI inputs found. Connect a device...');
             }
 
             // Listen for new devices
             WebMidi.addListener('connected', (e) => {
                 Logger.midi('Device connected:', e.port.name);
-                if (e.port.type === 'input' && !this.connected) {
-                    this.connectToInput(e.port);
+                if (e.port.type === 'input') {
+                    this.updateDeviceList();
+                    // Auto-connect if no device is connected
+                    if (!this.currentInput) {
+                        this.connectToInput(e.port);
+                    }
                 }
             });
 
             WebMidi.addListener('disconnected', (e) => {
                 Logger.midi('Device disconnected:', e.port.name);
-                this.connected = false;
-                this.updateUI('midi-device', 'Not connected');
+                if (e.port.type === 'input') {
+                    this.updateDeviceList();
+                    // If current device was disconnected, clear it
+                    if (this.currentInput && this.currentInput.id === e.port.id) {
+                        this.currentInput = null;
+                        this.showLastMidiEvent('Device disconnected');
+                    }
+                }
             });
 
         } catch (error) {
             Logger.midi('Error initializing MIDI:', error);
+            console.error('MIDI Error:', error);
+        }
+    }
+
+    updateDeviceList() {
+        if (!this.selector) return;
+
+        const inputs = WebMidi.inputs;
+        Logger.midi(`Available devices: ${inputs.length}`);
+
+        // Clear and populate selector
+        this.selector.innerHTML = '';
+
+        if (inputs.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'No MIDI devices';
+            this.selector.appendChild(option);
+        } else {
+            inputs.forEach((input, index) => {
+                const option = document.createElement('option');
+                option.value = input.id;
+                option.textContent = `${index + 1}: ${input.name}`;
+                this.selector.appendChild(option);
+                Logger.midi(`  [${index}] ${input.name} (${input.id})`);
+            });
+
+            // Select current device if exists
+            if (this.currentInput) {
+                this.selector.value = this.currentInput.id;
+            }
         }
     }
 
     connectToInput(input) {
+        // Disconnect from previous input
+        if (this.currentInput) {
+            Logger.midi(`Disconnecting from: ${this.currentInput.name}`);
+            this.currentInput.removeListener();
+        }
+
         Logger.midi(`Connecting to: ${input.name}`);
-        this.connected = true;
-        this.updateUI('midi-device', input.name);
+        this.currentInput = input;
+
+        // Update selector
+        if (this.selector) {
+            this.selector.value = input.id;
+        }
+
+        this.showLastMidiEvent(`Connected to: ${input.name}`);
 
         // Listen to all note on messages
         input.addListener('noteon', (e) => {
-            Logger.midi(`Note ON: ${e.note.name}${e.note.octave} (${e.note.number}) - Velocity: ${e.velocity}`);
+            const msg = `Note ON: ${e.note.name}${e.note.octave} (${e.note.number}) Vel: ${e.rawVelocity}`;
+            Logger.midi(msg);
+            this.showLastMidiEvent(msg);
             this.handleNoteOn(e.note.number);
         });
 
         // Listen to all note off messages
         input.addListener('noteoff', (e) => {
-            Logger.midi(`Note OFF: ${e.note.name}${e.note.octave} (${e.note.number})`);
+            const msg = `Note OFF: ${e.note.name}${e.note.octave} (${e.note.number})`;
+            Logger.midi(msg);
+            this.showLastMidiEvent(msg);
         });
 
         // Listen to control change messages
         input.addListener('controlchange', (e) => {
-            Logger.midi(`CC: ${e.controller.number} = ${e.value} (raw: ${e.rawValue})`);
+            const msg = `CC${e.controller.number} = ${e.rawValue}/127 (${e.value.toFixed(2)})`;
+            Logger.midi(msg);
+            this.showLastMidiEvent(msg);
             this.handleCC(e.controller.number, e.value);
         });
 
         // Listen to pitch bend
         input.addListener('pitchbend', (e) => {
-            Logger.midi(`Pitch Bend: ${e.value}`);
+            const msg = `Pitch Bend: ${e.value.toFixed(2)}`;
+            Logger.midi(msg);
+            this.showLastMidiEvent(msg);
         });
+
+        Logger.midi(`Now listening to: ${input.name}`);
+    }
+
+    showLastMidiEvent(message) {
+        const element = document.getElementById('last-midi-event');
+        if (element) {
+            element.textContent = `Last: ${message}`;
+        }
     }
 
     handleNoteOn(note) {
-        if (note === this.mappings.shaderNext.value) {
-            this.onShaderChange('next');
-        } else if (note === this.mappings.shaderPrev.value) {
-            this.onShaderChange('prev');
-        } else {
-            // Map other notes to shader selection (0-127 MIDI notes to shader indices)
-            this.onShaderChange('index', note);
-        }
+        // Map notes 0-127 to shader selection
+        this.onShaderChange('index', note);
     }
 
     handleCC(cc, value) {
@@ -192,12 +272,29 @@ class MIDIController {
         } else if (cc === this.mappings.saturation.value) {
             this.onParameterChange('saturation', value);
             this.updateUI('sat-value', value.toFixed(2));
-        } else if (cc === this.mappings.lightness.value) {
-            this.onParameterChange('lightness', value);
-            this.updateUI('light-value', value.toFixed(2));
-        } else if (cc === this.mappings.monochrome.value) {
-            this.onParameterChange('monochrome', value);
-            this.updateUI('mono-value', value.toFixed(2));
+        } else if (cc === this.mappings.shaderNext.value) {
+            if (value > 0.5) {  // Trigger on values above threshold
+                this.onShaderChange('next');
+            }
+        } else if (cc === this.mappings.shaderPrev.value) {
+            if (value > 0.5) {  // Trigger on values above threshold
+                this.onShaderChange('prev');
+            }
+        } else if (cc === this.mappings.zoom.value) {
+            // Map 0-1 to 0.1-5.0 zoom range
+            const zoom = 0.1 + value * 4.9;
+            this.onParameterChange('zoom', zoom);
+            this.updateUI('zoom-value', zoom.toFixed(2));
+        } else if (cc === this.mappings.speed.value) {
+            // Map 0-1 to 0-4 speed multiplier
+            const speed = value * 4.0;
+            this.onParameterChange('speed', speed);
+            this.updateUI('speed-value', speed.toFixed(2));
+        } else if (cc === this.mappings.mirror.value) {
+            // Toggle mirror at 0.5 threshold
+            const mirror = value > 0.5 ? 1.0 : 0.0;
+            this.onParameterChange('mirror', mirror);
+            this.updateUI('mirror-value', mirror > 0.5 ? 'ON' : 'OFF');
         }
     }
 
@@ -224,13 +321,17 @@ class ShaderRenderer {
         this.globalUniforms = {
             u_hue: 0.0,
             u_saturation: 1.0,
-            u_lightness: 1.0,
-            u_monochrome: 0.0
+            u_zoom: 1.0,
+            u_speed: 1.0,
+            u_mirror: 0.0
         };
 
         // Current shader material
         this.material = null;
         this.mesh = null;
+
+        // Time tracking for speed control
+        this.baseTime = 0;
 
         // Handle window resize
         window.addEventListener('resize', () => this.onResize());
@@ -244,11 +345,12 @@ class ShaderRenderer {
             uniform float iTimeDelta;
             uniform int iFrame;
 
-            // Global color controls
+            // Global controls
             uniform float u_hue;
             uniform float u_saturation;
-            uniform float u_lightness;
-            uniform float u_monochrome;
+            uniform float u_zoom;
+            uniform float u_speed;
+            uniform float u_mirror;
 
             // RGB to HSL conversion
             vec3 rgb2hsl(vec3 color) {
@@ -300,10 +402,23 @@ class ShaderRenderer {
             ${fragmentShader}
 
             void main() {
+                vec2 fragCoord = gl_FragCoord.xy;
+
+                // Apply zoom (scale from center)
+                vec2 center = iResolution.xy * 0.5;
+                fragCoord = (fragCoord - center) / u_zoom + center;
+
+                // Apply mirror effect (horizontal flip at center)
+                if (u_mirror > 0.5) {
+                    if (fragCoord.x > center.x) {
+                        fragCoord.x = center.x - (fragCoord.x - center.x);
+                    }
+                }
+
                 vec4 color = vec4(0.0);
 
-                // Call the user's mainImage function
-                mainImage(color, gl_FragCoord.xy);
+                // Call the user's mainImage function with modified coordinates
+                mainImage(color, fragCoord);
 
                 // Apply global color transformations
                 vec3 hsl = rgb2hsl(color.rgb);
@@ -314,14 +429,7 @@ class ShaderRenderer {
                 // Apply saturation adjustment
                 hsl.y *= u_saturation;
 
-                // Apply lightness adjustment
-                hsl.z *= u_lightness;
-
                 vec3 finalColor = hsl2rgb(hsl);
-
-                // Apply monochrome effect
-                float gray = dot(finalColor, vec3(0.299, 0.587, 0.114));
-                finalColor = mix(finalColor, vec3(gray), u_monochrome);
 
                 gl_FragColor = vec4(finalColor, color.a);
             }
@@ -343,8 +451,9 @@ class ShaderRenderer {
                 iFrame: { value: 0 },
                 u_hue: { value: this.globalUniforms.u_hue },
                 u_saturation: { value: this.globalUniforms.u_saturation },
-                u_lightness: { value: this.globalUniforms.u_lightness },
-                u_monochrome: { value: this.globalUniforms.u_monochrome }
+                u_zoom: { value: this.globalUniforms.u_zoom },
+                u_speed: { value: this.globalUniforms.u_speed },
+                u_mirror: { value: this.globalUniforms.u_mirror }
             }
         });
     }
@@ -383,11 +492,14 @@ class ShaderRenderer {
     render() {
         if (!this.material) return;
 
-        const elapsedTime = this.clock.getElapsedTime();
         const deltaTime = this.clock.getDelta();
+        const speed = this.globalUniforms.u_speed;
 
-        this.material.uniforms.iTime.value = elapsedTime;
-        this.material.uniforms.iTimeDelta.value = deltaTime;
+        // Update time with speed multiplier
+        this.baseTime += deltaTime * speed;
+
+        this.material.uniforms.iTime.value = this.baseTime;
+        this.material.uniforms.iTimeDelta.value = deltaTime * speed;
         this.material.uniforms.iFrame.value++;
 
         this.renderer.render(this.scene, this.camera);
