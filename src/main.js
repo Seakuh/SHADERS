@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { WebMidi } from 'webmidi';
+import { VideoInputManager } from './VideoInputManager.js';
+import { AudioInputManager } from './AudioInputManager.js';
 
 // ============================================
 // Logger
@@ -108,13 +110,15 @@ class MIDIController {
             grayscale: { type: 'cc', value: 3 },            // CC3 - Grayscale
             contrast: { type: 'cc', value: 4 },            // CC4 - Contrast
             brightness: { type: 'cc', value: 5 },            // CC5 - Brightness
-            zoom: { type: 'cc', value: 6 },               // CC5 - Zoom
+            zoom: { type: 'cc', value: 6 },               // CC6 - Zoom
+            videoMix: { type: 'cc', value: 7 },           // CC7 - Video mix amount
             speed: { type: 'cc', value: 16 },             // CC16 - Speed
+            audioIntensity: { type: 'cc', value: 17 },    // CC17 - Audio intensity
 
             // -------------- SHADER NAVIGATION --------------
-            shaderPrev: { type: 'cc', value: 43 },         // CC3 - Previous shader
-            shaderNext: { type: 'cc', value: 44 },         // CC4 - Next shader
-            mirror: { type: 'cc', value: 48 },            // CC60 - Mirror toggle (threshold 0.5)
+            shaderPrev: { type: 'cc', value: 43 },         // CC43 - Previous shader
+            shaderNext: { type: 'cc', value: 44 },         // CC44 - Next shader
+            mirror: { type: 'cc', value: 48 },            // CC48 - Mirror toggle (threshold 0.5)
         };
     }
 
@@ -318,6 +322,12 @@ class MIDIController {
             const mirror = value > 0.5 ? 1.0 : 0.0;
             this.onParameterChange('mirror', mirror);
             this.updateUI('mirror-value', mirror > 0.5 ? 'ON' : 'OFF');
+        } else if (cc === this.mappings.videoMix.value) {
+            this.onParameterChange('videoMix', value);
+            this.updateUI('video-mix-value', value.toFixed(2));
+        } else if (cc === this.mappings.audioIntensity.value) {
+            this.onParameterChange('audioIntensity', value);
+            this.updateUI('audio-intensity-value', value.toFixed(2));
         }
     }
 
@@ -350,8 +360,14 @@ class ShaderRenderer {
             u_brightness: 1.0,
             u_zoom: 1.0,
             u_speed: 1.0,
-            u_mirror: 0.0
+            u_mirror: 0.0,
+            u_videoMix: 0.0,
+            u_audioIntensity: 0.0
         };
+
+        // Video and audio textures
+        this.videoTexture = null;
+        this.audioData = null;
 
         // Current shader material
         this.material = null;
@@ -382,6 +398,15 @@ class ShaderRenderer {
             uniform float u_zoom;
             uniform float u_speed;
             uniform float u_mirror;
+            uniform float u_videoMix;
+            uniform float u_audioIntensity;
+
+            // Video and audio
+            uniform sampler2D u_videoTexture;
+            uniform bool u_hasVideo;
+            uniform float u_audioBass;
+            uniform float u_audioMid;
+            uniform float u_audioTreble;
 
             // RGB to HSL conversion
             vec3 rgb2hsl(vec3 color) {
@@ -478,6 +503,14 @@ class ShaderRenderer {
                 float gray = dot(finalColor, vec3(0.299, 0.587, 0.114));
                 finalColor = mix(finalColor, vec3(gray), u_grayscale);
 
+                // Mix with video texture if available
+                if (u_hasVideo && u_videoMix > 0.0) {
+                    vec2 videoUV = gl_FragCoord.xy / iResolution.xy;
+                    videoUV.y = 1.0 - videoUV.y; // Flip Y coordinate
+                    vec3 videoColor = texture2D(u_videoTexture, videoUV).rgb;
+                    finalColor = mix(finalColor, videoColor, u_videoMix);
+                }
+
                 gl_FragColor = vec4(finalColor, color.a);
             }
         `;
@@ -504,7 +537,14 @@ class ShaderRenderer {
                 u_brightness: { value: this.globalUniforms.u_brightness },
                 u_zoom: { value: this.globalUniforms.u_zoom },
                 u_speed: { value: this.globalUniforms.u_speed },
-                u_mirror: { value: this.globalUniforms.u_mirror }
+                u_mirror: { value: this.globalUniforms.u_mirror },
+                u_videoMix: { value: this.globalUniforms.u_videoMix },
+                u_audioIntensity: { value: this.globalUniforms.u_audioIntensity },
+                u_videoTexture: { value: null },
+                u_hasVideo: { value: false },
+                u_audioBass: { value: 0.0 },
+                u_audioMid: { value: 0.0 },
+                u_audioTreble: { value: 0.0 }
             }
         });
     }
@@ -540,6 +580,18 @@ class ShaderRenderer {
         }
     }
 
+    setVideoTexture(texture) {
+        this.videoTexture = texture;
+        if (this.material) {
+            this.material.uniforms.u_videoTexture.value = texture;
+            this.material.uniforms.u_hasVideo.value = texture !== null;
+        }
+    }
+
+    setAudioData(audioDataGetter) {
+        this.audioData = audioDataGetter;
+    }
+
     render() {
         if (!this.material) return;
 
@@ -552,6 +604,14 @@ class ShaderRenderer {
         this.material.uniforms.iTime.value = this.baseTime;
         this.material.uniforms.iTimeDelta.value = deltaTime * speed;
         this.material.uniforms.iFrame.value++;
+
+        // Update audio data if available
+        if (this.audioData) {
+            const data = this.audioData();
+            this.material.uniforms.u_audioBass.value = data.bass * this.globalUniforms.u_audioIntensity;
+            this.material.uniforms.u_audioMid.value = data.mid * this.globalUniforms.u_audioIntensity;
+            this.material.uniforms.u_audioTreble.value = data.treble * this.globalUniforms.u_audioIntensity;
+        }
 
         this.renderer.render(this.scene, this.camera);
     }
@@ -578,6 +638,8 @@ class ShaderMIDIApp {
         this.shaderManager = new ShaderManager();
         this.renderer = new ShaderRenderer();
         this.midiController = null;
+        this.videoManager = null;
+        this.audioManager = null;
         this.infoVisible = true;
     }
 
@@ -600,6 +662,20 @@ class ShaderMIDIApp {
             (param, value) => this.handleParameterChange(param, value)
         );
         await this.midiController.init();
+
+        // Initialize Video Manager
+        this.videoManager = new VideoInputManager((texture) => {
+            this.renderer.setVideoTexture(texture);
+            Logger.system('Video texture updated');
+        });
+        this.videoManager.init();
+
+        // Initialize Audio Manager
+        this.audioManager = new AudioInputManager((audioDataGetter) => {
+            this.renderer.setAudioData(audioDataGetter);
+            Logger.system('Audio data source updated');
+        });
+        this.audioManager.init();
 
         // Setup keyboard controls
         this.setupKeyboardControls();

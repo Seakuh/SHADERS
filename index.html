@@ -39,20 +39,19 @@
             display: none;
         }
 
-        #midi-selector {
+        select, input[type="file"] {
             background: rgba(0, 0, 0, 0.7);
             color: white;
             border: 1px solid rgba(255, 255, 255, 0.3);
             border-radius: 3px;
             padding: 5px;
-            margin-top: 5px;
             font-family: monospace;
             font-size: 11px;
             cursor: pointer;
-            pointer-events: auto;
+            width: 100%;
         }
 
-        #midi-selector option {
+        select option {
             background: #222;
             color: white;
         }
@@ -64,18 +63,73 @@
         .info-interactive {
             pointer-events: auto;
         }
+
+        .input-section {
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .input-label {
+            margin-bottom: 3px;
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        #video-preview {
+            display: none;
+        }
+
+        #audio-canvas {
+            width: 100%;
+            height: 40px;
+            margin-top: 5px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            display: none;
+        }
     </style>
 </head>
 <body>
     <div id="info">
         <div class="info-row">Current Shader: <span id="current-shader">Loading...</span></div>
-        <div class="info-interactive" style="margin-top: 8px;">
-            <div style="margin-bottom: 3px;">MIDI Input:</div>
+
+        <div class="info-interactive input-section">
+            <div class="input-label">MIDI Input:</div>
             <select id="midi-selector">
                 <option value="">No MIDI devices</option>
             </select>
         </div>
-        <div class="info-row" style="margin-top: 8px;">Vibrance: <span id="vib-value">0.00</span></div>
+
+        <div class="info-interactive input-section">
+            <div class="input-label">Video Input:</div>
+            <select id="video-selector">
+                <option value="none">None</option>
+                <option value="webcam">Webcam</option>
+                <option value="file">Upload File</option>
+            </select>
+            <input type="file" id="video-file" accept="video/*" style="display:none;">
+        </div>
+
+        <div class="info-interactive input-section">
+            <div class="input-label">Audio Input:</div>
+            <select id="audio-selector">
+                <option value="none">None</option>
+                <option value="microphone">Microphone</option>
+                <option value="file">Upload File</option>
+            </select>
+            <input type="file" id="audio-file" accept="audio/*" style="display:none;">
+            <canvas id="audio-canvas"></canvas>
+        </div>
+
+        <div class="input-section">
+            <div class="info-row">Video Mix: <span id="video-mix-value">0.00</span></div>
+            <div class="info-row">Audio Intensity: <span id="audio-intensity-value">0.00</span></div>
+        </div>
+
+        <div class="input-section">
+            <div class="info-row">Vibrance: <span id="vib-value">0.00</span></div>
         <div class="info-row">Hue: <span id="hue-value">0</span></div>
         <div class="info-row">Saturation: <span id="sat-value">1.0</span></div>
         <div class="info-row">Grayscale: <span id="gray-value">0.00</span></div>
