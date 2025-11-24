@@ -35,15 +35,15 @@ class ShaderManager {
 
     async loadShaderList() {
         try {
-            // Get all .glsl files in the directory
-            const glslFiles = import.meta.glob('./*.glsl', { as: 'raw' });
-            this.shaders = Object.keys(glslFiles).map(path => path.replace('./', ''));
+            // Get all shader files in the shaders directory
+            const glslFiles = import.meta.glob('../shaders/*.{glsl,glsln,gsls}', { as: 'raw' });
+            this.shaders = Object.keys(glslFiles).map(path => path.replace('../shaders/', ''));
 
             Logger.shader('Found shaders:', this.shaders);
 
             // Preload all shaders
             for (const [path, loader] of Object.entries(glslFiles)) {
-                const name = path.replace('./', '');
+                const name = path.replace('../shaders/', '');
                 const content = await loader();
                 this.loadedShaders.set(name, content);
                 Logger.shader(`Loaded: ${name}`);
