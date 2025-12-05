@@ -35,18 +35,40 @@ Der Server läuft auf `http://localhost:5173`
 | MIDI Event | Funktion | Details |
 |------------|----------|---------|
 | **Note 0-127** | Shader-Auswahl | Beliebige Note mappt proportional auf Shader-Index |
-| **CC 3** | Vorheriger Shader | Werte > 64 triggern Shader-Wechsel |
-| **CC 4** | Nächster Shader | Werte > 64 triggern Shader-Wechsel |
+| **CC 43** | Vorheriger Shader | Werte > 64 triggern Shader-Wechsel |
+| **CC 44** | Nächster Shader | Werte > 64 triggern Shader-Wechsel |
 
 ### Globale Parameter
 
 | MIDI CC | Parameter | Wertebereich | Funktion |
 |---------|-----------|--------------|----------|
+| **CC 0** | Vibrance | 0.0-1.0 | Vibrance-Effekt |
 | **CC 1** | Hue | 0-360° | Verschiebt den Farbton |
 | **CC 2** | Saturation | 0.0-1.0 | Steuert die Farbsättigung |
-| **CC 5** | Zoom | 0.1-5.0 | Zoomt den Shader (1.0 = normal) |
+| **CC 3** | Grayscale | 0.0-1.0 | Schwarz-Weiß-Effekt |
+| **CC 4** | Contrast | 0.0-2.0 | Kontrast |
+| **CC 5** | Brightness | 0.0-2.0 | Helligkeit |
+| **CC 6** | Zoom | 0.1-5.0 | Zoomt den Shader (1.0 = normal) |
+| **CC 7** | Video Mix | 0.0-1.0 | Mischt Webcam/Video ein |
 | **CC 16** | Speed | 0-4x | Geschwindigkeit der Animation |
-| **CC 60** | Mirror | ON/OFF | Horizontale Spiegelung (> 64 = AN) |
+| **CC 17** | Audio Intensity | 0.0-1.0 | Master-Audio-Intensität |
+
+### Audio-Modulation (Audio → Parameter)
+
+| MIDI CC | Parameter | Funktion |
+|---------|-----------|----------|
+| **CC 23** | Audio → Hue | Bass moduliert Farbton (0-360°) |
+| **CC 24** | Audio → Saturation | Bass moduliert Sättigung |
+| **CC 25** | Audio → Brightness | Bass moduliert Helligkeit |
+| **CC 26** | Audio → Zoom | Bass moduliert Zoom-Effekt |
+
+### Shader-Navigation
+
+| MIDI CC | Parameter | Funktion |
+|---------|-----------|----------|
+| **CC 43** | Previous Shader | Vorheriger Shader (> 64 = Trigger) |
+| **CC 44** | Next Shader | Nächster Shader (> 64 = Trigger) |
+| **CC 48** | Mirror | Horizontale Spiegelung (> 64 = AN) |
 
 ## Tastatursteuerung
 

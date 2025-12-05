@@ -115,6 +115,12 @@ class MIDIController {
             speed: { type: 'cc', value: 16 },             // CC16 - Speed
             audioIntensity: { type: 'cc', value: 17 },    // CC17 - Audio intensity
 
+            // -------------- AUDIO MODULATION --------------
+            audioToHue: { type: 'cc', value: 23 },        // CC23 - Audio modulates Hue
+            audioToSaturation: { type: 'cc', value: 24 }, // CC24 - Audio modulates Saturation
+            audioToBrightness: { type: 'cc', value: 25 }, // CC25 - Audio modulates Brightness
+            audioToZoom: { type: 'cc', value: 26 },       // CC26 - Audio modulates Zoom
+
             // -------------- SHADER NAVIGATION --------------
             shaderPrev: { type: 'cc', value: 43 },         // CC43 - Previous shader
             shaderNext: { type: 'cc', value: 44 },         // CC44 - Next shader
@@ -328,6 +334,14 @@ class MIDIController {
         } else if (cc === this.mappings.audioIntensity.value) {
             this.onParameterChange('audioIntensity', value);
             this.updateUI('audio-intensity-value', value.toFixed(2));
+        } else if (cc === this.mappings.audioToHue.value) {
+            this.onParameterChange('audioToHue', value);
+        } else if (cc === this.mappings.audioToSaturation.value) {
+            this.onParameterChange('audioToSaturation', value);
+        } else if (cc === this.mappings.audioToBrightness.value) {
+            this.onParameterChange('audioToBrightness', value);
+        } else if (cc === this.mappings.audioToZoom.value) {
+            this.onParameterChange('audioToZoom', value);
         }
     }
 
@@ -362,7 +376,11 @@ class ShaderRenderer {
             u_speed: 1.0,
             u_mirror: 0.0,
             u_videoMix: 0.0,
-            u_audioIntensity: 0.0
+            u_audioIntensity: 0.0,
+            u_audioToHue: 0.0,
+            u_audioToSaturation: 0.0,
+            u_audioToBrightness: 0.0,
+            u_audioToZoom: 0.0
         };
 
         // Video and audio textures
@@ -400,6 +418,10 @@ class ShaderRenderer {
             uniform float u_mirror;
             uniform float u_videoMix;
             uniform float u_audioIntensity;
+            uniform float u_audioToHue;
+            uniform float u_audioToSaturation;
+            uniform float u_audioToBrightness;
+            uniform float u_audioToZoom;
 
             // Video and audio
             uniform sampler2D u_videoTexture;
@@ -460,9 +482,13 @@ class ShaderRenderer {
             void main() {
                 vec2 fragCoord = gl_FragCoord.xy;
 
-                // Apply zoom (scale from center)
+                // Calculate audio modulation (bass is most impactful)
+                float audioMod = u_audioBass;
+
+                // Apply zoom with audio modulation
+                float dynamicZoom = u_zoom + (audioMod * u_audioToZoom * 2.0);
                 vec2 center = iResolution.xy * 0.5;
-                fragCoord = (fragCoord - center) / u_zoom + center;
+                fragCoord = (fragCoord - center) / dynamicZoom + center;
 
                 // Apply mirror effect (horizontal flip at center)
                 if (u_mirror > 0.5) {
@@ -478,8 +504,9 @@ class ShaderRenderer {
 
                 vec3 finalColor = color.rgb;
 
-                // Apply brightness
-                finalColor *= u_brightness;
+                // Apply brightness with audio modulation
+                float dynamicBrightness = u_brightness + (audioMod * u_audioToBrightness);
+                finalColor *= dynamicBrightness;
 
                 // Apply contrast
                 finalColor = (finalColor - 0.5) * u_contrast + 0.5;
@@ -487,11 +514,13 @@ class ShaderRenderer {
                 // Apply global color transformations via HSL
                 vec3 hsl = rgb2hsl(finalColor);
 
-                // Apply hue rotation
-                hsl.x = mod(hsl.x + u_hue / 360.0, 1.0);
+                // Apply hue rotation with audio modulation
+                float dynamicHue = u_hue + (audioMod * u_audioToHue * 360.0);
+                hsl.x = mod(hsl.x + dynamicHue / 360.0, 1.0);
 
-                // Apply saturation adjustment
-                hsl.y *= u_saturation;
+                // Apply saturation adjustment with audio modulation
+                float dynamicSaturation = u_saturation + (audioMod * u_audioToSaturation);
+                hsl.y *= clamp(dynamicSaturation, 0.0, 2.0);
 
                 // Apply vibrance (boost less saturated colors more)
                 float satBoost = (1.0 - hsl.y) * u_vibrance;
@@ -540,6 +569,10 @@ class ShaderRenderer {
                 u_mirror: { value: this.globalUniforms.u_mirror },
                 u_videoMix: { value: this.globalUniforms.u_videoMix },
                 u_audioIntensity: { value: this.globalUniforms.u_audioIntensity },
+                u_audioToHue: { value: this.globalUniforms.u_audioToHue },
+                u_audioToSaturation: { value: this.globalUniforms.u_audioToSaturation },
+                u_audioToBrightness: { value: this.globalUniforms.u_audioToBrightness },
+                u_audioToZoom: { value: this.globalUniforms.u_audioToZoom },
                 u_videoTexture: { value: null },
                 u_hasVideo: { value: false },
                 u_audioBass: { value: 0.0 },
