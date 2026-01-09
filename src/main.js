@@ -749,6 +749,74 @@ class ShaderMIDIApp {
     handleParameterChange(param, value) {
         this.renderer.updateGlobalParameter(param, value);
         Logger.system(`Parameter ${param} = ${value.toFixed(2)}`);
+
+        // Automatische Kamera-Aktivierung basierend auf audioToHue
+        if (param === 'audioToHue') {
+            this.handleAudioToHueChange(value);
+        }
+    }
+
+    async handleAudioToHueChange(audioToHueValue) {
+        // Schwellenwert für Kamera-Aktivierung (z.B. 0.48)
+        const cameraThreshold = 0.48;
+        const thresholdRange = 0.05; // Bereich um den Schwellenwert
+
+        // Prüfe ob audioToHue im Bereich für Kamera-Aktivierung ist
+        const isInCameraRange = Math.abs(audioToHueValue - cameraThreshold) < thresholdRange;
+
+        if (isInCameraRange && this.videoManager) {
+            // Aktiviere Kamera wenn noch nicht aktiv
+            if (this.videoManager.currentSource === 'none' || this.videoManager.currentSource === 'file') {
+                // Verwende erste verfügbare Kamera oder bereits ausgewählte
+                let deviceToUse = this.videoManager.currentDeviceId;
+                if (!deviceToUse && this.videoManager.availableDevices.length > 0) {
+                    // Suche nach Logitech-Kamera, sonst erste verfügbare
+                    const logitechDevice = this.videoManager.availableDevices.find(
+                        d => d.label && d.label.toLowerCase().includes('logitech')
+                    );
+                    deviceToUse = logitechDevice ? logitechDevice.deviceId : this.videoManager.availableDevices[0].deviceId;
+                }
+                
+                Logger.system(`AudioToHue ${audioToHueValue.toFixed(2)} → Aktiviere Kamera`);
+                await this.videoManager.handleCameraChange(deviceToUse || 'default');
+                // Update UI selector
+                if (this.videoManager.cameraSelector && deviceToUse) {
+                    this.videoManager.cameraSelector.value = deviceToUse;
+                }
+            }
+
+            // Berechne videoMix basierend auf audioToHue
+            // Je näher am Schwellenwert, desto stärker die Überblendung
+            const distanceFromThreshold = Math.abs(audioToHueValue - cameraThreshold);
+            const blendStrength = 1.0 - (distanceFromThreshold / thresholdRange);
+            const videoMix = Math.max(0.0, Math.min(1.0, blendStrength));
+
+            this.renderer.updateGlobalParameter('videoMix', videoMix);
+            this.updateUI('video-mix-value', videoMix.toFixed(2));
+            Logger.system(`Video Mix automatisch auf ${videoMix.toFixed(2)} gesetzt`);
+        } else if (!isInCameraRange && this.videoManager && 
+                   this.videoManager.currentSource !== 'none' && 
+                   this.videoManager.currentSource !== 'file') {
+            // Reduziere videoMix außerhalb des optimalen Bereichs
+            const distanceFromThreshold = Math.abs(audioToHueValue - cameraThreshold);
+            const blendStrength = Math.max(0.0, 1.0 - ((distanceFromThreshold - thresholdRange) / thresholdRange));
+            const videoMix = Math.max(0.0, Math.min(1.0, blendStrength));
+            
+            this.renderer.updateGlobalParameter('videoMix', videoMix);
+            this.updateUI('video-mix-value', videoMix.toFixed(2));
+            
+            // Deaktiviere Kamera nur wenn sehr weit entfernt
+            if (distanceFromThreshold > thresholdRange * 1.5) {
+                Logger.system(`AudioToHue ${audioToHueValue.toFixed(2)} → Deaktiviere Kamera`);
+                await this.videoManager.handleCameraChange('none');
+                this.renderer.updateGlobalParameter('videoMix', 0.0);
+                this.updateUI('video-mix-value', '0.00');
+                // Update UI selector
+                if (this.videoManager.cameraSelector) {
+                    this.videoManager.cameraSelector.value = 'none';
+                }
+            }
+        }
     }
 
     setupKeyboardControls() {

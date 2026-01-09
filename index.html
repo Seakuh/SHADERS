@@ -39,7 +39,7 @@
             display: none;
         }
 
-        select, input[type="file"] {
+        select, input[type="file"], button {
             background: rgba(0, 0, 0, 0.7);
             color: white;
             border: 1px solid rgba(255, 255, 255, 0.3);
@@ -49,6 +49,11 @@
             font-size: 11px;
             cursor: pointer;
             width: 100%;
+        }
+
+        button:hover {
+            background: rgba(0, 0, 0, 0.9);
+            border-color: rgba(255, 255, 255, 0.5);
         }
 
         select option {
@@ -103,13 +108,16 @@
         </div>
 
         <div class="info-interactive input-section">
-            <div class="input-label">Video Input:</div>
-            <select id="video-selector">
+            <div class="input-label">Camera:</div>
+            <select id="camera-selector">
                 <option value="none">None</option>
-                <option value="webcam">Webcam</option>
-                <option value="file">Upload File</option>
             </select>
+        </div>
+
+        <div class="info-interactive input-section">
+            <div class="input-label">Video File:</div>
             <input type="file" id="video-file" accept="video/*" style="display:none;">
+            <button id="video-file-button">Select Video File</button>
         </div>
 
         <div class="info-interactive input-section">
