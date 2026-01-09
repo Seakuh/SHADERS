@@ -646,6 +646,11 @@ class ShaderRenderer {
             this.material.uniforms.u_audioTreble.value = data.treble * this.globalUniforms.u_audioIntensity;
         }
 
+        // Update video texture if available
+        if (this.videoTexture && this.videoTexture.image && this.videoTexture.image.readyState === 4) {
+            this.videoTexture.needsUpdate = true;
+        }
+
         this.renderer.render(this.scene, this.camera);
     }
 

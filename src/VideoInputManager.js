@@ -36,7 +36,62 @@ export class VideoInputManager {
             }
         });
 
+        // Setup drag and drop
+        this.setupDragAndDrop();
+
         console.log('[VIDEO] Video input manager initialized');
+    }
+
+    setupDragAndDrop() {
+        const body = document.body;
+        const preventDefaults = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        // Highlight drop area when item is dragged over it
+        body.addEventListener('dragenter', (e) => {
+            console.log('[VIDEO] Drag enter');
+            body.style.backgroundColor = 'rgba(0, 100, 200, 0.3)';
+        });
+
+        body.addEventListener('dragover', (e) => {
+            // Allow drop
+            e.dataTransfer.dropEffect = 'copy';
+        });
+
+        body.addEventListener('dragleave', (e) => {
+            console.log('[VIDEO] Drag leave');
+            body.style.backgroundColor = '';
+        });
+
+        body.addEventListener('drop', (e) => {
+            console.log('[VIDEO] Drop event');
+            body.style.backgroundColor = '';
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                console.log('[VIDEO] Dropped file:', file.name, file.type, `(${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+
+                // Check if it's a video file
+                if (file.type.startsWith('video/')) {
+                    console.log('[VIDEO] Loading video file via drag and drop...');
+                    this.loadVideoFile(file);
+                    // Update selector to show file is loaded
+                    if (this.selector) {
+                        this.selector.value = 'file';
+                    }
+                } else {
+                    console.warn('[VIDEO] Dropped file is not a video:', file.type);
+                }
+            }
+        });
     }
 
     async handleSourceChange(source) {
