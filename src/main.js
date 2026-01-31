@@ -407,6 +407,8 @@ class ShaderRenderer {
         this.maskCanvas = null;
         this.maskCtx = null;
         this.maskTexture = null;
+        this.maskHistory = []; // History for undo
+        this.maxHistory = 10; // Max history entries
         this.initMaskCanvas();
 
         // Current shader material
@@ -438,8 +440,37 @@ class ShaderRenderer {
         Logger.system('Mask canvas initialized');
     }
 
+    saveToHistory() {
+        if (!this.maskCtx) return;
+        // Save current state to history
+        const imageData = this.maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
+        this.maskHistory.push(imageData);
+        // Limit history size
+        if (this.maskHistory.length > this.maxHistory) {
+            this.maskHistory.shift();
+        }
+        Logger.system(`Mask saved to history (${this.maskHistory.length}/${this.maxHistory})`);
+    }
+
+    undoMask() {
+        if (!this.maskCtx || this.maskHistory.length === 0) {
+            Logger.system('No history to undo');
+            return false;
+        }
+        // Restore last state from history
+        const imageData = this.maskHistory.pop();
+        this.maskCtx.putImageData(imageData, 0, 0);
+        if (this.maskTexture) {
+            this.maskTexture.needsUpdate = true;
+        }
+        Logger.system(`Mask restored from history (${this.maskHistory.length} remaining)`);
+        return true;
+    }
+
     clearMask() {
         if (!this.maskCtx) return;
+        // Save current state before clearing
+        this.saveToHistory();
         this.maskCtx.fillStyle = 'white';
         this.maskCtx.fillRect(0, 0, this.maskCanvas.width, this.maskCanvas.height);
         if (this.maskTexture) {
@@ -467,8 +498,8 @@ class ShaderRenderer {
 
         // Convert screen coordinates to canvas coordinates
         const canvasX = (x / window.innerWidth) * this.maskCanvas.width;
-        // Flip Y coordinate (screen Y is from top, canvas Y is from top, but shader expects bottom)
-        const canvasY = (y / window.innerHeight) * this.maskCanvas.height;
+        // Flip Y coordinate to match shader UV (shader flips Y, so we need to flip here too)
+        const canvasY = (1.0 - y / window.innerHeight) * this.maskCanvas.height;
 
         this.maskCtx.beginPath();
         this.maskCtx.arc(canvasX, canvasY, brushSize / 2, 0, Math.PI * 2);
@@ -1024,8 +1055,19 @@ class ShaderMIDIApp {
         const invertButton = document.getElementById('invert-mask-button');
         if (invertButton) {
             invertButton.addEventListener('click', () => {
+                this.renderer.saveToHistory();
                 this.renderer.invertMask();
                 Logger.system('Mask inverted');
+            });
+        }
+
+        // Setup undo button
+        const undoButton = document.getElementById('undo-mask-button');
+        if (undoButton) {
+            undoButton.addEventListener('click', () => {
+                if (this.renderer.undoMask()) {
+                    this.maskDirty = this.renderer.maskHistory.length > 0;
+                }
             });
         }
 
@@ -1034,6 +1076,8 @@ class ShaderMIDIApp {
 
         canvas.addEventListener('mousedown', (e) => {
             if (!this.editMode) return;
+            // Save state before starting to draw
+            this.renderer.saveToHistory();
             this.isDrawing = true;
             this.drawAtPosition(e.clientX, e.clientY, e.shiftKey);
         });
@@ -1062,6 +1106,8 @@ class ShaderMIDIApp {
         canvas.addEventListener('touchstart', (e) => {
             if (!this.editMode) return;
             e.preventDefault();
+            // Save state before starting to draw
+            this.renderer.saveToHistory();
             this.isDrawing = true;
             const touch = e.touches[0];
             this.drawAtPosition(touch.clientX, touch.clientY, false);
@@ -1145,8 +1191,16 @@ class ShaderMIDIApp {
                     break;
                 case 'i':
                     if (this.editMode) {
+                        this.renderer.saveToHistory();
                         this.renderer.invertMask();
                         Logger.system('Mask inverted');
+                    }
+                    break;
+                case 'z':
+                    if (this.editMode) {
+                        if (this.renderer.undoMask()) {
+                            this.maskDirty = this.renderer.maskHistory.length > 0;
+                        }
                     }
                     break;
             }
