@@ -292,7 +292,7 @@ class MIDIController {
         // When in edit mode AND mirror is active, CC0 and CC1 control mirror parameters
         if (this.editModeActive && this.mirrorActive) {
             if (cc === this.mappings.vibrance.value) {
-                // CC0 -> Mirror split (how far apart the mirrored halves are)
+                // CC0 -> Source shift (where to sample the mirror from)
                 this.onParameterChange('mirrorSplit', value);
                 this.updateUI('mirror-split-value', value.toFixed(2));
                 return;
@@ -422,7 +422,7 @@ class ShaderRenderer {
             u_audioToSaturation: 0.0,
             u_audioToBrightness: 0.0,
             u_audioToZoom: 0.0,
-            u_mirrorSplit: 0.0,
+            u_mirrorSplit: 0.5,  // Default: no shift (centered)
             u_mirrorSegments: 2,
             u_perspTL: { x: 0.0, y: 1.0 },
             u_perspTR: { x: 1.0, y: 1.0 },
@@ -684,17 +684,17 @@ class ShaderRenderer {
                         // Convert back to cartesian
                         centered = vec2(cos(angle), sin(angle)) * radius;
                     } else {
-                        // Simple mirror from center with split
-                        // Split pushes the halves apart (0 = touching, 1 = far apart)
-                        float splitAmount = u_mirrorSplit * center.x;
+                        // Simple mirror from center
+                        // CC0 shifts the source horizontally (where to sample from)
+                        float sourceShift = (u_mirrorSplit - 0.5) * center.x * 2.0;
 
+                        // Mirror: right side shows flipped left side
                         if (centered.x > 0.0) {
-                            // Right side: mirror and shift
-                            centered.x = -centered.x + splitAmount;
-                        } else {
-                            // Left side: shift
-                            centered.x = centered.x - splitAmount;
+                            centered.x = -centered.x;
                         }
+
+                        // Apply source shift
+                        centered.x = centered.x + sourceShift;
                     }
 
                     fragCoord = centered + center;
