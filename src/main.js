@@ -131,8 +131,9 @@ class MIDIController {
             brushSize: { type: 'cc', value: 61 },         // CC61 - Brush size
         };
 
-        // Track mirror state for CC0/CC1 mode switching
+        // Track mirror and edit mode state for CC0/CC1 mode switching
         this.mirrorActive = false;
+        this.editModeActive = false;
     }
 
     async init() {
@@ -288,12 +289,12 @@ class MIDIController {
     }
 
     handleCC(cc, value) {
-        // When mirror is active, CC0 and CC1 control mirror parameters
-        if (this.mirrorActive) {
+        // When in edit mode AND mirror is active, CC0 and CC1 control mirror parameters
+        if (this.editModeActive && this.mirrorActive) {
             if (cc === this.mappings.vibrance.value) {
-                // CC0 -> Mirror offset (0.0 to 1.0 = position of mirror line)
-                this.onParameterChange('mirrorOffset', value);
-                this.updateUI('mirror-offset-value', value.toFixed(2));
+                // CC0 -> Mirror split (how far apart the mirrored halves are)
+                this.onParameterChange('mirrorSplit', value);
+                this.updateUI('mirror-split-value', value.toFixed(2));
                 return;
             } else if (cc === this.mappings.hue.value) {
                 // CC1 -> Mirror segments (2 to 32 slices for kaleidoscope)
@@ -385,6 +386,10 @@ class MIDIController {
         const element = document.getElementById(id);
         if (element) element.textContent = value;
     }
+
+    setEditModeActive(active) {
+        this.editModeActive = active;
+    }
 }
 
 // ============================================
@@ -417,8 +422,13 @@ class ShaderRenderer {
             u_audioToSaturation: 0.0,
             u_audioToBrightness: 0.0,
             u_audioToZoom: 0.0,
-            u_mirrorOffset: 0.5,
-            u_mirrorSegments: 2
+            u_mirrorSplit: 0.0,
+            u_mirrorSegments: 2,
+            u_perspTL: { x: 0.0, y: 1.0 },
+            u_perspTR: { x: 1.0, y: 1.0 },
+            u_perspBL: { x: 0.0, y: 0.0 },
+            u_perspBR: { x: 1.0, y: 0.0 },
+            u_perspActive: false
         };
 
         // Video and audio textures
@@ -557,8 +567,15 @@ class ShaderRenderer {
             uniform float u_audioToSaturation;
             uniform float u_audioToBrightness;
             uniform float u_audioToZoom;
-            uniform float u_mirrorOffset;
+            uniform float u_mirrorSplit;
             uniform float u_mirrorSegments;
+
+            // Perspective transform corners (normalized 0-1)
+            uniform vec2 u_perspTL;  // Top-left
+            uniform vec2 u_perspTR;  // Top-right
+            uniform vec2 u_perspBL;  // Bottom-left
+            uniform vec2 u_perspBR;  // Bottom-right
+            uniform bool u_perspActive;
 
             // Video and audio
             uniform sampler2D u_videoTexture;
@@ -631,7 +648,19 @@ class ShaderRenderer {
                 vec2 center = iResolution.xy * 0.5;
                 fragCoord = (fragCoord - center) / dynamicZoom + center;
 
-                // Apply mirror/kaleidoscope effect
+                // Apply perspective transformation first
+                if (u_perspActive) {
+                    vec2 uv = fragCoord / iResolution.xy;
+
+                    // Bilinear interpolation for perspective
+                    vec2 topInterp = mix(u_perspTL, u_perspTR, uv.x);
+                    vec2 bottomInterp = mix(u_perspBL, u_perspBR, uv.x);
+                    vec2 perspUV = mix(bottomInterp, topInterp, uv.y);
+
+                    fragCoord = perspUV * iResolution.xy;
+                }
+
+                // Apply mirror/kaleidoscope effect (always from center)
                 if (u_mirror > 0.5) {
                     // Convert to centered coordinates
                     vec2 centered = fragCoord - center;
@@ -641,13 +670,13 @@ class ShaderRenderer {
                         float angle = atan(centered.y, centered.x);
                         float radius = length(centered);
 
-                        // Calculate segment angle
+                        // Calculate segment angle based on number of segments
                         float segmentAngle = 3.14159265 * 2.0 / u_mirrorSegments;
 
                         // Fold angle into first segment
                         angle = mod(angle, segmentAngle);
 
-                        // Mirror within segment
+                        // Mirror within segment (creates kaleidoscope effect)
                         if (angle > segmentAngle * 0.5) {
                             angle = segmentAngle - angle;
                         }
@@ -655,10 +684,16 @@ class ShaderRenderer {
                         // Convert back to cartesian
                         centered = vec2(cos(angle), sin(angle)) * radius;
                     } else {
-                        // Simple mirror mode with adjustable offset
-                        float mirrorX = center.x * u_mirrorOffset * 2.0;
-                        if (centered.x + center.x > mirrorX) {
-                            centered.x = mirrorX - center.x - (centered.x + center.x - mirrorX);
+                        // Simple mirror from center with split
+                        // Split pushes the halves apart (0 = touching, 1 = far apart)
+                        float splitAmount = u_mirrorSplit * center.x;
+
+                        if (centered.x > 0.0) {
+                            // Right side: mirror and shift
+                            centered.x = -centered.x + splitAmount;
+                        } else {
+                            // Left side: shift
+                            centered.x = centered.x - splitAmount;
                         }
                     }
 
@@ -749,8 +784,13 @@ class ShaderRenderer {
                 u_audioToSaturation: { value: this.globalUniforms.u_audioToSaturation },
                 u_audioToBrightness: { value: this.globalUniforms.u_audioToBrightness },
                 u_audioToZoom: { value: this.globalUniforms.u_audioToZoom },
-                u_mirrorOffset: { value: this.globalUniforms.u_mirrorOffset },
+                u_mirrorSplit: { value: this.globalUniforms.u_mirrorSplit },
                 u_mirrorSegments: { value: this.globalUniforms.u_mirrorSegments },
+                u_perspTL: { value: new THREE.Vector2(0.0, 1.0) },
+                u_perspTR: { value: new THREE.Vector2(1.0, 1.0) },
+                u_perspBL: { value: new THREE.Vector2(0.0, 0.0) },
+                u_perspBR: { value: new THREE.Vector2(1.0, 0.0) },
+                u_perspActive: { value: false },
                 u_videoTexture: { value: null },
                 u_hasVideo: { value: false },
                 u_audioBass: { value: 0.0 },
@@ -787,6 +827,16 @@ class ShaderRenderer {
             if (this.maskTexture) {
                 this.material.uniforms.u_maskTexture.value = this.maskTexture;
                 this.material.uniforms.u_hasMask.value = hadMask;
+            }
+
+            // Restore perspective if it was active
+            const hadPersp = this.globalUniforms.u_perspActive;
+            if (hadPersp) {
+                this.material.uniforms.u_perspTL.value.set(this.globalUniforms.u_perspTL.x, this.globalUniforms.u_perspTL.y);
+                this.material.uniforms.u_perspTR.value.set(this.globalUniforms.u_perspTR.x, this.globalUniforms.u_perspTR.y);
+                this.material.uniforms.u_perspBL.value.set(this.globalUniforms.u_perspBL.x, this.globalUniforms.u_perspBL.y);
+                this.material.uniforms.u_perspBR.value.set(this.globalUniforms.u_perspBR.x, this.globalUniforms.u_perspBR.y);
+                this.material.uniforms.u_perspActive.value = true;
             }
 
             // Create fullscreen quad
@@ -833,6 +883,12 @@ class ShaderRenderer {
         }
         if (this.material && this.material.uniforms.u_maskTexture) {
             this.material.uniforms.u_maskTexture.value = this.maskTexture;
+        }
+    }
+
+    setPerspectiveActive(active) {
+        if (this.material && this.material.uniforms.u_perspActive) {
+            this.material.uniforms.u_perspActive.value = active;
         }
     }
 
@@ -923,6 +979,17 @@ class ShaderMIDIApp {
         this.isDrawing = false;
         this.brushCursor = null;
         this.maskDirty = false; // Track if mask has been drawn on
+
+        // Perspective handles
+        this.perspectiveHandles = [];
+        this.perspectiveCorners = {
+            tl: { x: 0.0, y: 1.0 },
+            tr: { x: 1.0, y: 1.0 },
+            bl: { x: 0.0, y: 0.0 },
+            br: { x: 1.0, y: 0.0 }
+        };
+        this.activePerspHandle = null;
+        this.perspectiveDirty = false;
     }
 
     async init() {
@@ -1124,11 +1191,21 @@ class ShaderMIDIApp {
             });
         }
 
+        // Setup reset perspective button
+        const resetPerspButton = document.getElementById('reset-persp-button');
+        if (resetPerspButton) {
+            resetPerspButton.addEventListener('click', () => {
+                this.resetPerspective();
+            });
+        }
+
         // Setup mouse events for drawing
         const canvas = this.renderer.renderer.domElement;
 
         canvas.addEventListener('mousedown', (e) => {
             if (!this.editMode) return;
+            // Don't draw if dragging a perspective handle
+            if (this.activePerspHandle) return;
             // Save state before starting to draw
             this.renderer.saveToHistory();
             this.isDrawing = true;
@@ -1177,7 +1254,176 @@ class ShaderMIDIApp {
             this.isDrawing = false;
         });
 
+        // Setup perspective handles
+        this.setupPerspectiveHandles();
+
         Logger.system('Edit mode initialized');
+    }
+
+    setupPerspectiveHandles() {
+        const handleSize = 40;
+        const corners = ['tl', 'tr', 'bl', 'br'];
+        const positions = {
+            tl: { left: '50px', top: '50px' },
+            tr: { right: '50px', top: '50px' },
+            bl: { left: '50px', bottom: '50px' },
+            br: { right: '50px', bottom: '50px' }
+        };
+
+        corners.forEach(corner => {
+            const handle = document.createElement('div');
+            handle.id = `persp-handle-${corner}`;
+            handle.className = 'persp-handle';
+            handle.style.cssText = `
+                position: fixed;
+                width: ${handleSize}px;
+                height: ${handleSize}px;
+                border: 3px solid white;
+                border-radius: 50%;
+                background: transparent;
+                cursor: move;
+                z-index: 9998;
+                display: none;
+                box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            `;
+
+            // Position
+            if (positions[corner].left) handle.style.left = positions[corner].left;
+            if (positions[corner].right) handle.style.right = positions[corner].right;
+            if (positions[corner].top) handle.style.top = positions[corner].top;
+            if (positions[corner].bottom) handle.style.bottom = positions[corner].bottom;
+
+            handle.dataset.corner = corner;
+
+            // Drag events
+            handle.addEventListener('mousedown', (e) => this.startPerspectiveDrag(e, corner, handle));
+
+            document.body.appendChild(handle);
+            this.perspectiveHandles.push(handle);
+        });
+
+        // Global mouse events for dragging
+        document.addEventListener('mousemove', (e) => this.onPerspectiveDrag(e));
+        document.addEventListener('mouseup', () => this.stopPerspectiveDrag());
+    }
+
+    startPerspectiveDrag(e, corner, handle) {
+        if (!this.editMode) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.activePerspHandle = { corner, handle };
+        handle.style.borderColor = '#f80';
+    }
+
+    onPerspectiveDrag(e) {
+        if (!this.activePerspHandle || !this.editMode) return;
+
+        const { corner, handle } = this.activePerspHandle;
+        const handleSize = 40;
+
+        // Update handle position
+        const x = e.clientX - handleSize / 2;
+        const y = e.clientY - handleSize / 2;
+
+        handle.style.left = x + 'px';
+        handle.style.top = y + 'px';
+        handle.style.right = 'auto';
+        handle.style.bottom = 'auto';
+
+        // Update perspective corner (normalized 0-1)
+        const normX = e.clientX / window.innerWidth;
+        const normY = 1.0 - (e.clientY / window.innerHeight); // Flip Y for shader
+
+        this.perspectiveCorners[corner] = { x: normX, y: normY };
+        this.perspectiveDirty = true;
+
+        // Update shader uniforms
+        this.updatePerspectiveUniforms();
+    }
+
+    stopPerspectiveDrag() {
+        if (this.activePerspHandle) {
+            this.activePerspHandle.handle.style.borderColor = 'white';
+            this.activePerspHandle = null;
+        }
+    }
+
+    updatePerspectiveHandles() {
+        const show = this.editMode;
+        this.perspectiveHandles.forEach(handle => {
+            handle.style.display = show ? 'block' : 'none';
+        });
+
+        // Keep perspective active if it was modified
+        if (this.perspectiveDirty) {
+            this.renderer.setPerspectiveActive(true);
+        }
+    }
+
+    updatePerspectiveUniforms() {
+        if (!this.renderer.material) return;
+
+        const c = this.perspectiveCorners;
+
+        // Update shader uniforms
+        this.renderer.material.uniforms.u_perspTL.value.set(c.tl.x, c.tl.y);
+        this.renderer.material.uniforms.u_perspTR.value.set(c.tr.x, c.tr.y);
+        this.renderer.material.uniforms.u_perspBL.value.set(c.bl.x, c.bl.y);
+        this.renderer.material.uniforms.u_perspBR.value.set(c.br.x, c.br.y);
+
+        // Store in globalUniforms for shader reload
+        this.renderer.globalUniforms.u_perspTL = { x: c.tl.x, y: c.tl.y };
+        this.renderer.globalUniforms.u_perspTR = { x: c.tr.x, y: c.tr.y };
+        this.renderer.globalUniforms.u_perspBL = { x: c.bl.x, y: c.bl.y };
+        this.renderer.globalUniforms.u_perspBR = { x: c.br.x, y: c.br.y };
+        this.renderer.globalUniforms.u_perspActive = true;
+
+        this.renderer.setPerspectiveActive(true);
+    }
+
+    resetPerspective() {
+        this.perspectiveCorners = {
+            tl: { x: 0.0, y: 1.0 },
+            tr: { x: 1.0, y: 1.0 },
+            bl: { x: 0.0, y: 0.0 },
+            br: { x: 1.0, y: 0.0 }
+        };
+        this.perspectiveDirty = false;
+
+        // Reset handle positions
+        const positions = {
+            tl: { left: '50px', top: '50px', right: 'auto', bottom: 'auto' },
+            tr: { left: 'auto', top: '50px', right: '50px', bottom: 'auto' },
+            bl: { left: '50px', top: 'auto', right: 'auto', bottom: '50px' },
+            br: { left: 'auto', top: 'auto', right: '50px', bottom: '50px' }
+        };
+
+        this.perspectiveHandles.forEach(handle => {
+            const corner = handle.dataset.corner;
+            const pos = positions[corner];
+            handle.style.left = pos.left;
+            handle.style.top = pos.top;
+            handle.style.right = pos.right;
+            handle.style.bottom = pos.bottom;
+        });
+
+        // Reset globalUniforms
+        this.renderer.globalUniforms.u_perspTL = { x: 0.0, y: 1.0 };
+        this.renderer.globalUniforms.u_perspTR = { x: 1.0, y: 1.0 };
+        this.renderer.globalUniforms.u_perspBL = { x: 0.0, y: 0.0 };
+        this.renderer.globalUniforms.u_perspBR = { x: 1.0, y: 0.0 };
+        this.renderer.globalUniforms.u_perspActive = false;
+
+        // Reset shader uniforms
+        if (this.renderer.material) {
+            this.renderer.material.uniforms.u_perspTL.value.set(0.0, 1.0);
+            this.renderer.material.uniforms.u_perspTR.value.set(1.0, 1.0);
+            this.renderer.material.uniforms.u_perspBL.value.set(0.0, 0.0);
+            this.renderer.material.uniforms.u_perspBR.value.set(1.0, 0.0);
+        }
+
+        this.renderer.setPerspectiveActive(false);
+        Logger.system('Perspective reset');
     }
 
     drawAtPosition(x, y, restore) {
@@ -1191,12 +1437,20 @@ class ShaderMIDIApp {
     toggleEditMode() {
         this.editMode = !this.editMode;
 
+        // Update MIDI controller edit mode state
+        if (this.midiController) {
+            this.midiController.setEditModeActive(this.editMode);
+        }
+
         // Update UI
         document.body.classList.toggle('edit-mode', this.editMode);
         this.updateUI('edit-mode-value', this.editMode ? 'ON' : 'OFF');
 
         // Update brush cursor
         this.updateBrushCursor();
+
+        // Show/hide perspective handles
+        this.updatePerspectiveHandles();
 
         // Keep mask active if it has been drawn on
         // Only disable mask rendering if mask is clean

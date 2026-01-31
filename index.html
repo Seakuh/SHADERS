@@ -197,10 +197,13 @@
             <input type="range" id="brush-size-slider" min="5" max="200" value="50" style="width: 100%; margin-top: 5px;">
             <div style="margin-top: 5px; display: flex; gap: 5px;">
                 <button id="clear-mask-button" style="flex: 1; font-size: 10px; padding: 3px;">Clear</button>
-                <button id="undo-mask-button" style="flex: 1; font-size: 10px; padding: 3px;">Undo (Z)</button>
+                <button id="undo-mask-button" style="flex: 1; font-size: 10px; padding: 3px;">Undo</button>
                 <button id="invert-mask-button" style="flex: 1; font-size: 10px; padding: 3px;">Invert</button>
             </div>
-            <div class="info-row" style="margin-top: 5px; font-size: 9px; opacity: 0.6;">CC60=Toggle | Mouse=Erase | Shift=Restore</div>
+            <div style="margin-top: 5px;">
+                <button id="reset-persp-button" style="width: 100%; font-size: 10px; padding: 3px;">Reset Perspective</button>
+            </div>
+            <div class="info-row" style="margin-top: 5px; font-size: 9px; opacity: 0.6;">Mouse=Erase | Shift=Restore | Corners=Perspective</div>
         </div>
 
         <div class="input-section">
@@ -212,7 +215,7 @@
         <div class="info-row">Brightness: <span id="bright-value">1.00</span></div>
         <div class="info-row">Zoom: <span id="zoom-value">1.00</span></div>
         <div class="info-row">Speed: <span id="speed-value">1.00</span></div>
-        <div class="info-row">Mirror: <span id="mirror-value">OFF</span> | Offset: <span id="mirror-offset-value">0.50</span> | Seg: <span id="mirror-segments-value">2</span></div>
+        <div class="info-row">Mirror: <span id="mirror-value">OFF</span> | Split: <span id="mirror-split-value">0.00</span> | Seg: <span id="mirror-segments-value">2</span></div>
         <div class="info-row" style="margin-top: 5px; font-size: 10px; opacity: 0.7;">H=info | E=edit | F=fullscreen</div>
         <div id="last-midi-event" class="info-row" style="margin-top: 8px; font-size: 10px; color: #0f0; opacity: 0.8;"></div>
     </div>
