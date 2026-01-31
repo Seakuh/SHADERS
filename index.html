@@ -94,9 +94,63 @@
             border-radius: 3px;
             display: none;
         }
+
+        /* Edit Mode Styles */
+        body.edit-mode {
+            cursor: crosshair !important;
+        }
+
+        body.edit-mode canvas {
+            cursor: crosshair !important;
+        }
+
+        #edit-mode-section {
+            background: rgba(255, 100, 0, 0.1);
+            border: 1px solid rgba(255, 100, 0, 0.3);
+            border-radius: 3px;
+            padding: 8px;
+        }
+
+        body.edit-mode #edit-mode-section {
+            background: rgba(255, 100, 0, 0.3);
+            border-color: rgba(255, 100, 0, 0.8);
+        }
+
+        #brush-size-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        #brush-size-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #f80;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        #brush-cursor {
+            position: fixed;
+            border: 2px solid rgba(255, 136, 0, 0.8);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            display: none;
+        }
+
+        body.edit-mode #brush-cursor {
+            display: block;
+        }
     </style>
 </head>
 <body>
+    <div id="brush-cursor"></div>
     <div id="info">
         <div class="info-row">Current Shader: <span id="current-shader">Loading...</span></div>
 
@@ -112,6 +166,7 @@
             <select id="camera-selector">
                 <option value="none">None</option>
             </select>
+            <button id="refresh-cameras-button" style="margin-top: 5px; font-size: 10px; padding: 3px;">🔄 Refresh Cameras</button>
         </div>
 
         <div class="info-interactive input-section">
@@ -136,6 +191,17 @@
             <div class="info-row">Audio Intensity: <span id="audio-intensity-value">0.00</span></div>
         </div>
 
+        <div class="input-section" id="edit-mode-section">
+            <div class="info-row" style="color: #f80;">Edit Mode: <span id="edit-mode-value">OFF</span></div>
+            <div class="info-row">Brush Size: <span id="brush-size-value">50</span></div>
+            <input type="range" id="brush-size-slider" min="5" max="200" value="50" style="width: 100%; margin-top: 5px;">
+            <div style="margin-top: 5px; display: flex; gap: 5px;">
+                <button id="clear-mask-button" style="flex: 1; font-size: 10px; padding: 3px;">Clear Mask</button>
+                <button id="invert-mask-button" style="flex: 1; font-size: 10px; padding: 3px;">Invert</button>
+            </div>
+            <div class="info-row" style="margin-top: 5px; font-size: 9px; opacity: 0.6;">CC60 = Toggle | Mouse = Draw</div>
+        </div>
+
         <div class="input-section">
             <div class="info-row">Vibrance: <span id="vib-value">0.00</span></div>
         <div class="info-row">Hue: <span id="hue-value">0</span></div>
@@ -146,7 +212,7 @@
         <div class="info-row">Zoom: <span id="zoom-value">1.00</span></div>
         <div class="info-row">Speed: <span id="speed-value">1.00</span></div>
         <div class="info-row">Mirror: <span id="mirror-value">OFF</span></div>
-        <div class="info-row" style="margin-top: 5px; font-size: 10px; opacity: 0.7;">Press 'H' to toggle info</div>
+        <div class="info-row" style="margin-top: 5px; font-size: 10px; opacity: 0.7;">H=info | E=edit | F=fullscreen</div>
         <div id="last-midi-event" class="info-row" style="margin-top: 8px; font-size: 10px; color: #0f0; opacity: 0.8;"></div>
     </div>
     <script type="module" src="/src/main.js"></script>

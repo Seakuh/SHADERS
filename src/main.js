@@ -125,6 +125,10 @@ class MIDIController {
             shaderPrev: { type: 'cc', value: 43 },         // CC43 - Previous shader
             shaderNext: { type: 'cc', value: 44 },         // CC44 - Next shader
             mirror: { type: 'cc', value: 48 },            // CC48 - Mirror toggle (threshold 0.5)
+
+            // -------------- EDIT MODE --------------
+            editMode: { type: 'cc', value: 60 },          // CC60 - Toggle edit mode
+            brushSize: { type: 'cc', value: 61 },         // CC61 - Brush size
         };
     }
 
@@ -342,6 +346,18 @@ class MIDIController {
             this.onParameterChange('audioToBrightness', value);
         } else if (cc === this.mappings.audioToZoom.value) {
             this.onParameterChange('audioToZoom', value);
+        } else if (cc === this.mappings.editMode.value) {
+            // Toggle edit mode at 0.5 threshold
+            if (value > 0.5) {
+                this.onParameterChange('editModeToggle', true);
+            }
+        } else if (cc === this.mappings.brushSize.value) {
+            // Map 0-1 to 5-200 brush size
+            const brushSize = Math.round(5 + value * 195);
+            this.onParameterChange('brushSize', brushSize);
+            this.updateUI('brush-size-value', brushSize);
+            const slider = document.getElementById('brush-size-slider');
+            if (slider) slider.value = brushSize;
         }
     }
 
@@ -387,6 +403,12 @@ class ShaderRenderer {
         this.videoTexture = null;
         this.audioData = null;
 
+        // Mask texture for edit mode
+        this.maskCanvas = null;
+        this.maskCtx = null;
+        this.maskTexture = null;
+        this.initMaskCanvas();
+
         // Current shader material
         this.material = null;
         this.mesh = null;
@@ -396,6 +418,66 @@ class ShaderRenderer {
 
         // Handle window resize
         window.addEventListener('resize', () => this.onResize());
+    }
+
+    initMaskCanvas() {
+        // Create offscreen canvas for mask
+        this.maskCanvas = document.createElement('canvas');
+        this.maskCanvas.width = window.innerWidth;
+        this.maskCanvas.height = window.innerHeight;
+        this.maskCtx = this.maskCanvas.getContext('2d');
+
+        // Initialize with white (fully visible)
+        this.clearMask();
+
+        // Create THREE.js texture from canvas
+        this.maskTexture = new THREE.CanvasTexture(this.maskCanvas);
+        this.maskTexture.minFilter = THREE.LinearFilter;
+        this.maskTexture.magFilter = THREE.LinearFilter;
+
+        Logger.system('Mask canvas initialized');
+    }
+
+    clearMask() {
+        if (!this.maskCtx) return;
+        this.maskCtx.fillStyle = 'white';
+        this.maskCtx.fillRect(0, 0, this.maskCanvas.width, this.maskCanvas.height);
+        if (this.maskTexture) {
+            this.maskTexture.needsUpdate = true;
+        }
+    }
+
+    invertMask() {
+        if (!this.maskCtx) return;
+        const imageData = this.maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = 255 - data[i];       // R
+            data[i + 1] = 255 - data[i + 1]; // G
+            data[i + 2] = 255 - data[i + 2]; // B
+        }
+        this.maskCtx.putImageData(imageData, 0, 0);
+        if (this.maskTexture) {
+            this.maskTexture.needsUpdate = true;
+        }
+    }
+
+    drawOnMask(x, y, brushSize, erase = true) {
+        if (!this.maskCtx) return;
+
+        // Convert screen coordinates to canvas coordinates
+        const canvasX = (x / window.innerWidth) * this.maskCanvas.width;
+        // Flip Y coordinate (screen Y is from top, canvas Y is from top, but shader expects bottom)
+        const canvasY = (y / window.innerHeight) * this.maskCanvas.height;
+
+        this.maskCtx.beginPath();
+        this.maskCtx.arc(canvasX, canvasY, brushSize / 2, 0, Math.PI * 2);
+        this.maskCtx.fillStyle = erase ? 'black' : 'white';
+        this.maskCtx.fill();
+
+        if (this.maskTexture) {
+            this.maskTexture.needsUpdate = true;
+        }
     }
 
     createShaderMaterial(fragmentShader) {
@@ -429,6 +511,10 @@ class ShaderRenderer {
             uniform float u_audioBass;
             uniform float u_audioMid;
             uniform float u_audioTreble;
+
+            // Mask for edit mode
+            uniform sampler2D u_maskTexture;
+            uniform bool u_hasMask;
 
             // RGB to HSL conversion
             vec3 rgb2hsl(vec3 color) {
@@ -540,7 +626,15 @@ class ShaderRenderer {
                     finalColor = mix(finalColor, videoColor, u_videoMix);
                 }
 
-                gl_FragColor = vec4(finalColor, color.a);
+                // Apply mask if active
+                float maskAlpha = 1.0;
+                if (u_hasMask) {
+                    vec2 maskUV = gl_FragCoord.xy / iResolution.xy;
+                    maskUV.y = 1.0 - maskUV.y; // Flip Y coordinate
+                    maskAlpha = texture2D(u_maskTexture, maskUV).r;
+                }
+
+                gl_FragColor = vec4(finalColor * maskAlpha, color.a * maskAlpha);
             }
         `;
 
@@ -577,13 +671,19 @@ class ShaderRenderer {
                 u_hasVideo: { value: false },
                 u_audioBass: { value: 0.0 },
                 u_audioMid: { value: 0.0 },
-                u_audioTreble: { value: 0.0 }
+                u_audioTreble: { value: 0.0 },
+                u_maskTexture: { value: this.maskTexture },
+                u_hasMask: { value: false }
             }
         });
     }
 
     loadShader(shaderContent) {
         try {
+            // Save current state
+            const hadVideo = this.material ? this.material.uniforms.u_hasVideo.value : false;
+            const hadMask = this.material ? this.material.uniforms.u_hasMask.value : false;
+
             // Remove old mesh
             if (this.mesh) {
                 this.scene.remove(this.mesh);
@@ -592,6 +692,18 @@ class ShaderRenderer {
 
             // Create new material with shader
             this.material = this.createShaderMaterial(shaderContent);
+
+            // Restore video texture if available
+            if (this.videoTexture) {
+                this.material.uniforms.u_videoTexture.value = this.videoTexture;
+                this.material.uniforms.u_hasVideo.value = hadVideo;
+            }
+
+            // Restore mask texture
+            if (this.maskTexture) {
+                this.material.uniforms.u_maskTexture.value = this.maskTexture;
+                this.material.uniforms.u_hasMask.value = hadMask;
+            }
 
             // Create fullscreen quad
             const geometry = new THREE.PlaneGeometry(2, 2);
@@ -623,6 +735,21 @@ class ShaderRenderer {
 
     setAudioData(audioDataGetter) {
         this.audioData = audioDataGetter;
+    }
+
+    setMaskActive(active) {
+        if (this.material) {
+            this.material.uniforms.u_hasMask.value = active;
+        }
+    }
+
+    updateMaskTexture() {
+        if (this.maskTexture) {
+            this.maskTexture.needsUpdate = true;
+        }
+        if (this.material && this.material.uniforms.u_maskTexture) {
+            this.material.uniforms.u_maskTexture.value = this.maskTexture;
+        }
     }
 
     render() {
@@ -664,6 +791,32 @@ class ShaderRenderer {
             this.material.uniforms.iResolution.value.set(width, height);
         }
 
+        // Resize mask canvas
+        if (this.maskCanvas) {
+            // Save current mask content
+            const imageData = this.maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
+
+            // Resize canvas
+            this.maskCanvas.width = width;
+            this.maskCanvas.height = height;
+
+            // Clear with white
+            this.maskCtx.fillStyle = 'white';
+            this.maskCtx.fillRect(0, 0, width, height);
+
+            // Try to restore mask content (scaled)
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = imageData.width;
+            tempCanvas.height = imageData.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(imageData, 0, 0);
+            this.maskCtx.drawImage(tempCanvas, 0, 0, width, height);
+
+            if (this.maskTexture) {
+                this.maskTexture.needsUpdate = true;
+            }
+        }
+
         Logger.system('Window resized:', { width, height });
     }
 }
@@ -679,6 +832,13 @@ class ShaderMIDIApp {
         this.videoManager = null;
         this.audioManager = null;
         this.infoVisible = true;
+
+        // Edit mode state
+        this.editMode = false;
+        this.brushSize = 50;
+        this.isDrawing = false;
+        this.brushCursor = null;
+        this.maskDirty = false; // Track if mask has been drawn on
     }
 
     async init() {
@@ -718,6 +878,9 @@ class ShaderMIDIApp {
         // Setup keyboard controls
         this.setupKeyboardControls();
 
+        // Setup edit mode
+        this.setupEditMode();
+
         // Start render loop
         this.animate();
 
@@ -747,8 +910,21 @@ class ShaderMIDIApp {
     }
 
     handleParameterChange(param, value) {
+        // Handle edit mode toggle specially
+        if (param === 'editModeToggle') {
+            this.toggleEditMode();
+            return;
+        }
+
+        // Handle brush size specially
+        if (param === 'brushSize') {
+            this.brushSize = value;
+            this.updateBrushCursor();
+            return;
+        }
+
         this.renderer.updateGlobalParameter(param, value);
-        Logger.system(`Parameter ${param} = ${value.toFixed(2)}`);
+        Logger.system(`Parameter ${param} = ${typeof value === 'number' ? value.toFixed(2) : value}`);
 
         // Automatische Kamera-Aktivierung basierend auf audioToHue
         if (param === 'audioToHue') {
@@ -819,6 +995,126 @@ class ShaderMIDIApp {
         }
     }
 
+    setupEditMode() {
+        // Get brush cursor element
+        this.brushCursor = document.getElementById('brush-cursor');
+
+        // Setup brush size slider
+        const brushSlider = document.getElementById('brush-size-slider');
+        if (brushSlider) {
+            brushSlider.addEventListener('input', (e) => {
+                this.brushSize = parseInt(e.target.value);
+                this.updateUI('brush-size-value', this.brushSize);
+                this.updateBrushCursor();
+            });
+        }
+
+        // Setup clear mask button
+        const clearButton = document.getElementById('clear-mask-button');
+        if (clearButton) {
+            clearButton.addEventListener('click', () => {
+                this.renderer.clearMask();
+                this.maskDirty = false;
+                this.renderer.setMaskActive(this.editMode);
+                Logger.system('Mask cleared');
+            });
+        }
+
+        // Setup invert mask button
+        const invertButton = document.getElementById('invert-mask-button');
+        if (invertButton) {
+            invertButton.addEventListener('click', () => {
+                this.renderer.invertMask();
+                Logger.system('Mask inverted');
+            });
+        }
+
+        // Setup mouse events for drawing
+        const canvas = this.renderer.renderer.domElement;
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (!this.editMode) return;
+            this.isDrawing = true;
+            this.drawAtPosition(e.clientX, e.clientY, e.shiftKey);
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            // Update brush cursor position
+            if (this.brushCursor && this.editMode) {
+                this.brushCursor.style.left = (e.clientX - this.brushSize / 2) + 'px';
+                this.brushCursor.style.top = (e.clientY - this.brushSize / 2) + 'px';
+            }
+
+            // Draw if mouse is down
+            if (!this.editMode || !this.isDrawing) return;
+            this.drawAtPosition(e.clientX, e.clientY, e.shiftKey);
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            this.isDrawing = false;
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            this.isDrawing = false;
+        });
+
+        // Touch support
+        canvas.addEventListener('touchstart', (e) => {
+            if (!this.editMode) return;
+            e.preventDefault();
+            this.isDrawing = true;
+            const touch = e.touches[0];
+            this.drawAtPosition(touch.clientX, touch.clientY, false);
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!this.editMode || !this.isDrawing) return;
+            e.preventDefault();
+            const touch = e.touches[0];
+            this.drawAtPosition(touch.clientX, touch.clientY, false);
+        });
+
+        canvas.addEventListener('touchend', () => {
+            this.isDrawing = false;
+        });
+
+        Logger.system('Edit mode initialized');
+    }
+
+    drawAtPosition(x, y, restore) {
+        // erase = true (black) to hide, restore = false (white) to show
+        // Shift key = restore (paint white to show again)
+        this.renderer.drawOnMask(x, y, this.brushSize, !restore);
+        this.maskDirty = true;
+        this.renderer.setMaskActive(true);
+    }
+
+    toggleEditMode() {
+        this.editMode = !this.editMode;
+
+        // Update UI
+        document.body.classList.toggle('edit-mode', this.editMode);
+        this.updateUI('edit-mode-value', this.editMode ? 'ON' : 'OFF');
+
+        // Update brush cursor
+        this.updateBrushCursor();
+
+        // Keep mask active if it has been drawn on
+        // Only disable mask rendering if mask is clean
+        if (!this.maskDirty) {
+            this.renderer.setMaskActive(this.editMode);
+        }
+        // If mask is dirty, always keep it active
+
+        Logger.system(`Edit mode: ${this.editMode ? 'ON' : 'OFF'}`);
+    }
+
+    updateBrushCursor() {
+        if (!this.brushCursor) return;
+        this.brushCursor.style.width = this.brushSize + 'px';
+        this.brushCursor.style.height = this.brushSize + 'px';
+    }
+
     setupKeyboardControls() {
         window.addEventListener('keydown', (e) => {
             switch(e.key.toLowerCase()) {
@@ -836,10 +1132,27 @@ class ShaderMIDIApp {
                 case 'f':
                     this.toggleFullscreen();
                     break;
+                case 'e':
+                    this.toggleEditMode();
+                    break;
+                case 'c':
+                    if (this.editMode) {
+                        this.renderer.clearMask();
+                        this.maskDirty = false;
+                        this.renderer.setMaskActive(this.editMode);
+                        Logger.system('Mask cleared');
+                    }
+                    break;
+                case 'i':
+                    if (this.editMode) {
+                        this.renderer.invertMask();
+                        Logger.system('Mask inverted');
+                    }
+                    break;
             }
         });
 
-        Logger.system('Keyboard controls: Arrow keys/N/P = change shader, H = toggle info, F = fullscreen');
+        Logger.system('Keyboard controls: Arrow keys/N/P = change shader, H = toggle info, F = fullscreen, E = edit mode');
     }
 
     toggleInfo() {

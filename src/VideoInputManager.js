@@ -22,6 +22,7 @@ export class VideoInputManager {
         this.cameraSelector = document.getElementById('camera-selector');
         this.fileInput = document.getElementById('video-file');
         this.fileButton = document.getElementById('video-file-button');
+        this.refreshButton = document.getElementById('refresh-cameras-button');
 
         if (!this.cameraSelector || !this.fileInput || !this.fileButton) {
             console.error('[VIDEO] UI elements not found');
@@ -32,6 +33,18 @@ export class VideoInputManager {
         this.cameraSelector.addEventListener('change', (e) => {
             this.handleCameraChange(e.target.value);
         });
+
+        // Setup refresh button
+        if (this.refreshButton) {
+            this.refreshButton.addEventListener('click', async () => {
+                console.log('[VIDEO] Manual camera refresh triggered');
+                this.refreshButton.textContent = '🔄 Refreshing...';
+                this.refreshButton.disabled = true;
+                await this.updateDeviceList();
+                this.refreshButton.textContent = '🔄 Refresh Cameras';
+                this.refreshButton.disabled = false;
+            });
+        }
 
         // Setup file button click handler
         this.fileButton.addEventListener('click', () => {
@@ -63,47 +76,99 @@ export class VideoInputManager {
 
     async updateDeviceList() {
         try {
-            // Request permission first (needed for device labels)
-            // Try with different constraints to better detect USB cameras
+            console.log('[VIDEO] Starting device enumeration...');
+            
+            // First, try to get permission with minimal constraints
+            // This is needed to get device labels (especially for USB cameras)
+            let permissionGranted = false;
             try {
+                // Try with minimal constraints first
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    } 
+                    video: true  // Minimal constraint to get permission
                 });
-                // Stop the stream immediately, we just needed permission
                 stream.getTracks().forEach(track => track.stop());
+                permissionGranted = true;
                 console.log('[VIDEO] Permission granted');
             } catch (e) {
-                console.log('[VIDEO] Permission request failed, will use device IDs only:', e.message);
+                console.warn('[VIDEO] Initial permission request failed:', e.message);
+                // Try again with more specific constraints
+                try {
+                    const stream2 = await navigator.mediaDevices.getUserMedia({ 
+                        video: {
+                            width: { min: 320, ideal: 640 },
+                            height: { min: 240, ideal: 480 }
+                        } 
+                    });
+                    stream2.getTracks().forEach(track => track.stop());
+                    permissionGranted = true;
+                    console.log('[VIDEO] Permission granted on second attempt');
+                } catch (e2) {
+                    console.warn('[VIDEO] Permission request failed, will use device IDs only:', e2.message);
+                }
             }
 
-            // Wait a bit for devices to be ready (especially USB devices)
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // Wait longer for USB devices to initialize
+            console.log('[VIDEO] Waiting for USB devices to initialize...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
 
-            // Enumerate all devices
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            this.availableDevices = devices.filter(device => device.kind === 'videoinput');
-
-            console.log(`[VIDEO] Found ${this.availableDevices.length} camera devices:`);
-            this.availableDevices.forEach((device, index) => {
-                const label = device.label || `Camera ${index + 1}`;
-                const deviceIdShort = device.deviceId.length > 20 ? device.deviceId.substring(0, 20) + '...' : device.deviceId;
-                console.log(`[VIDEO]   [${index}] ${label}`);
-                console.log(`[VIDEO]       ID: ${deviceIdShort}`);
-                
-                // Check for Logitech
-                if (label.toLowerCase().includes('logitech')) {
-                    console.log(`[VIDEO]       ✓ Logitech camera detected!`);
+            // Enumerate all devices multiple times to catch USB devices
+            let devices = [];
+            let attempts = 3;
+            
+            for (let i = 0; i < attempts; i++) {
+                try {
+                    const enumeratedDevices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevices = enumeratedDevices.filter(device => device.kind === 'videoinput');
+                    
+                    // Merge with existing devices, prefer devices with labels
+                    videoDevices.forEach(newDevice => {
+                        const existing = devices.find(d => d.deviceId === newDevice.deviceId);
+                        if (!existing) {
+                            devices.push(newDevice);
+                        } else if (newDevice.label && !existing.label) {
+                            // Update existing device with label if we got one
+                            existing.label = newDevice.label;
+                        }
+                    });
+                    
+                    if (i < attempts - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                } catch (error) {
+                    console.warn(`[VIDEO] Enumeration attempt ${i + 1} failed:`, error);
                 }
-            });
+            }
+
+            this.availableDevices = devices;
+
+            console.log(`[VIDEO] Found ${this.availableDevices.length} camera device(s):`);
+            if (this.availableDevices.length === 0) {
+                console.warn('[VIDEO] ⚠ No cameras found! Make sure your USB camera is connected and try refreshing the page.');
+            } else {
+                this.availableDevices.forEach((device, index) => {
+                    const label = device.label || `Camera ${index + 1} (no label)`;
+                    const deviceIdShort = device.deviceId.length > 30 ? device.deviceId.substring(0, 30) + '...' : device.deviceId;
+                    console.log(`[VIDEO]   [${index}] ${label}`);
+                    console.log(`[VIDEO]       ID: ${deviceIdShort}`);
+                    
+                    // Check for external/USB cameras
+                    const lowerLabel = label.toLowerCase();
+                    if (lowerLabel.includes('logitech')) {
+                        console.log(`[VIDEO]       ✓ Logitech USB camera detected!`);
+                    } else if (lowerLabel.includes('usb') || lowerLabel.includes('external')) {
+                        console.log(`[VIDEO]       ✓ USB/External camera detected!`);
+                    } else if (!lowerLabel.includes('integrated') && !lowerLabel.includes('built-in') && !lowerLabel.includes('front') && !lowerLabel.includes('back')) {
+                        console.log(`[VIDEO]       ? Possibly external camera`);
+                    }
+                });
+            }
 
             // Update camera selector
             this.updateCameraSelector();
 
         } catch (error) {
             console.error('[VIDEO] Error enumerating devices:', error);
+            console.error('[VIDEO] Error details:', error.name, error.message);
             this.updateCameraSelector();
         }
     }
@@ -126,19 +191,37 @@ export class VideoInputManager {
                 const option = document.createElement('option');
                 option.value = device.deviceId;
                 const label = device.label || `Camera ${index + 1}`;
-                // Highlight Logitech cameras
-                const displayName = label.toLowerCase().includes('logitech') 
-                    ? `📷 ${label} (USB)` 
-                    : `${index + 1}: ${label}`;
+                const lowerLabel = label.toLowerCase();
+                
+                // Highlight external/USB cameras
+                let displayName;
+                if (lowerLabel.includes('logitech')) {
+                    displayName = `📷 ${label} (USB)`;
+                } else if (lowerLabel.includes('usb') || lowerLabel.includes('external')) {
+                    displayName = `📷 ${label} (USB)`;
+                } else if (!lowerLabel.includes('integrated') && !lowerLabel.includes('built-in') && !lowerLabel.includes('front') && !lowerLabel.includes('back')) {
+                    displayName = `📷 ${label} (External?)`;
+                } else {
+                    displayName = `${index + 1}: ${label}`;
+                }
+                
                 option.textContent = displayName;
                 this.cameraSelector.appendChild(option);
             });
         } else {
-            // Fallback: single "Default" option
-            const defaultOption = document.createElement('option');
-            defaultOption.value = 'default';
-            defaultOption.textContent = 'Default Camera';
-            this.cameraSelector.appendChild(defaultOption);
+            // No devices found - add refresh option
+            const noDevicesOption = document.createElement('option');
+            noDevicesOption.value = 'none';
+            noDevicesOption.textContent = 'No cameras found - Click to refresh';
+            this.cameraSelector.appendChild(noDevicesOption);
+            
+            // Add refresh button functionality
+            this.cameraSelector.addEventListener('click', async () => {
+                if (this.cameraSelector.value === 'none' && this.availableDevices.length === 0) {
+                    console.log('[VIDEO] Manual refresh triggered');
+                    await this.updateDeviceList();
+                }
+            }, { once: true });
         }
 
         // Select current device if exists
@@ -222,27 +305,33 @@ export class VideoInputManager {
 
     async startWebcam(deviceId = null) {
         try {
-            const constraints = {
+            let constraints = {
                 video: {
                     width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    facingMode: 'user' // Prefer front-facing cameras
+                    height: { ideal: 720 }
                 }
             };
 
             // If deviceId is provided, use it (for USB cameras like Logitech)
-            if (deviceId) {
+            if (deviceId && deviceId !== 'default') {
                 constraints.video.deviceId = { exact: deviceId };
                 const device = this.availableDevices.find(d => d.deviceId === deviceId);
                 const deviceName = device ? device.label : deviceId.substring(0, 20);
                 console.log(`[VIDEO] Starting camera: ${deviceName}`);
-                
-                // Remove facingMode when using specific device ID
-                delete constraints.video.facingMode;
             } else {
                 console.log('[VIDEO] Starting default webcam');
+                // For default, try to avoid integrated cameras if USB cameras are available
+                const usbCameras = this.availableDevices.filter(d => {
+                    const label = (d.label || '').toLowerCase();
+                    return label.includes('usb') || label.includes('logitech') || label.includes('external');
+                });
+                if (usbCameras.length > 0) {
+                    console.log('[VIDEO] USB cameras available, but using default. Consider selecting specific camera.');
+                }
             }
 
+            // Try to start the camera
+            console.log('[VIDEO] Requesting camera access with constraints:', JSON.stringify(constraints));
             this.stream = await navigator.mediaDevices.getUserMedia(constraints);
 
             this.createVideoElement();
@@ -260,13 +349,47 @@ export class VideoInputManager {
                 constraint: error.constraint
             });
             
-            // Try to refresh device list and retry
+            // Try different approaches based on error type
             if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-                console.log('[VIDEO] Device not found, refreshing device list...');
+                console.log('[VIDEO] Device not found, refreshing device list and retrying...');
                 await this.updateDeviceList();
+                
+                // If we have a deviceId, try again with updated list
+                if (deviceId && deviceId !== 'default') {
+                    const deviceStillExists = this.availableDevices.find(d => d.deviceId === deviceId);
+                    if (deviceStillExists) {
+                        console.log('[VIDEO] Device found in updated list, retrying...');
+                        // Retry once more
+                        try {
+                            const retryConstraints = {
+                                video: {
+                                    deviceId: { exact: deviceId },
+                                    width: { ideal: 1280 },
+                                    height: { ideal: 720 }
+                                }
+                            };
+                            this.stream = await navigator.mediaDevices.getUserMedia(retryConstraints);
+                            // If successful, continue with normal flow
+                            this.createVideoElement();
+                            this.videoElement.srcObject = this.stream;
+                            this.videoElement.play();
+                            const device = this.availableDevices.find(d => d.deviceId === deviceId);
+                            const deviceName = device ? device.label : 'Camera';
+                            console.log(`[VIDEO] Camera started successfully after retry: ${deviceName}`);
+                            return;
+                        } catch (retryError) {
+                            console.error('[VIDEO] Retry also failed:', retryError);
+                        }
+                    }
+                }
+            } else if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                alert('Camera permission denied. Please allow camera access in your browser settings and refresh the page.');
+            } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                alert(`Camera is being used by another application. Please close other apps using the camera and try again.\n\nError: ${error.message}`);
+            } else {
+                alert(`Could not access camera: ${error.message}\n\nPlease ensure:\n- Camera is connected via USB\n- No other application is using the camera\n- Browser has camera permissions\n- Try refreshing the page`);
             }
             
-            alert(`Could not access camera: ${error.message}. Please check permissions and ensure the camera is connected.`);
             if (this.cameraSelector) {
                 this.cameraSelector.value = 'none';
             }
