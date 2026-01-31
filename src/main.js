@@ -130,6 +130,9 @@ class MIDIController {
             editMode: { type: 'cc', value: 60 },          // CC60 - Toggle edit mode
             brushSize: { type: 'cc', value: 61 },         // CC61 - Brush size
         };
+
+        // Track mirror state for CC0/CC1 mode switching
+        this.mirrorActive = false;
     }
 
     async init() {
@@ -285,6 +288,22 @@ class MIDIController {
     }
 
     handleCC(cc, value) {
+        // When mirror is active, CC0 and CC1 control mirror parameters
+        if (this.mirrorActive) {
+            if (cc === this.mappings.vibrance.value) {
+                // CC0 -> Mirror offset (0.0 to 1.0 = position of mirror line)
+                this.onParameterChange('mirrorOffset', value);
+                this.updateUI('mirror-offset-value', value.toFixed(2));
+                return;
+            } else if (cc === this.mappings.hue.value) {
+                // CC1 -> Mirror segments (2 to 32 slices for kaleidoscope)
+                const segments = Math.round(2 + value * 30);
+                this.onParameterChange('mirrorSegments', segments);
+                this.updateUI('mirror-segments-value', segments);
+                return;
+            }
+        }
+
         if (cc === this.mappings.hue.value) {
             // Map 0-1 to 0-360 degrees
             const hue = value * 360;
@@ -330,6 +349,7 @@ class MIDIController {
         } else if (cc === this.mappings.mirror.value) {
             // Toggle mirror at 0.5 threshold
             const mirror = value > 0.5 ? 1.0 : 0.0;
+            this.mirrorActive = mirror > 0.5;
             this.onParameterChange('mirror', mirror);
             this.updateUI('mirror-value', mirror > 0.5 ? 'ON' : 'OFF');
         } else if (cc === this.mappings.videoMix.value) {
@@ -396,7 +416,9 @@ class ShaderRenderer {
             u_audioToHue: 0.0,
             u_audioToSaturation: 0.0,
             u_audioToBrightness: 0.0,
-            u_audioToZoom: 0.0
+            u_audioToZoom: 0.0,
+            u_mirrorOffset: 0.5,
+            u_mirrorSegments: 2
         };
 
         // Video and audio textures
@@ -535,6 +557,8 @@ class ShaderRenderer {
             uniform float u_audioToSaturation;
             uniform float u_audioToBrightness;
             uniform float u_audioToZoom;
+            uniform float u_mirrorOffset;
+            uniform float u_mirrorSegments;
 
             // Video and audio
             uniform sampler2D u_videoTexture;
@@ -607,11 +631,38 @@ class ShaderRenderer {
                 vec2 center = iResolution.xy * 0.5;
                 fragCoord = (fragCoord - center) / dynamicZoom + center;
 
-                // Apply mirror effect (horizontal flip at center)
+                // Apply mirror/kaleidoscope effect
                 if (u_mirror > 0.5) {
-                    if (fragCoord.x > center.x) {
-                        fragCoord.x = center.x - (fragCoord.x - center.x);
+                    // Convert to centered coordinates
+                    vec2 centered = fragCoord - center;
+
+                    if (u_mirrorSegments > 2.0) {
+                        // Kaleidoscope mode: mirror in circular segments
+                        float angle = atan(centered.y, centered.x);
+                        float radius = length(centered);
+
+                        // Calculate segment angle
+                        float segmentAngle = 3.14159265 * 2.0 / u_mirrorSegments;
+
+                        // Fold angle into first segment
+                        angle = mod(angle, segmentAngle);
+
+                        // Mirror within segment
+                        if (angle > segmentAngle * 0.5) {
+                            angle = segmentAngle - angle;
+                        }
+
+                        // Convert back to cartesian
+                        centered = vec2(cos(angle), sin(angle)) * radius;
+                    } else {
+                        // Simple mirror mode with adjustable offset
+                        float mirrorX = center.x * u_mirrorOffset * 2.0;
+                        if (centered.x + center.x > mirrorX) {
+                            centered.x = mirrorX - center.x - (centered.x + center.x - mirrorX);
+                        }
                     }
+
+                    fragCoord = centered + center;
                 }
 
                 vec4 color = vec4(0.0);
@@ -698,6 +749,8 @@ class ShaderRenderer {
                 u_audioToSaturation: { value: this.globalUniforms.u_audioToSaturation },
                 u_audioToBrightness: { value: this.globalUniforms.u_audioToBrightness },
                 u_audioToZoom: { value: this.globalUniforms.u_audioToZoom },
+                u_mirrorOffset: { value: this.globalUniforms.u_mirrorOffset },
+                u_mirrorSegments: { value: this.globalUniforms.u_mirrorSegments },
                 u_videoTexture: { value: null },
                 u_hasVideo: { value: false },
                 u_audioBass: { value: 0.0 },
