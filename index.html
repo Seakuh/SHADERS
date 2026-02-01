@@ -147,10 +147,70 @@
         body.edit-mode #brush-cursor {
             display: block;
         }
+
+        body.edit-mode.polygon-mode #brush-cursor {
+            display: none;
+        }
+
+        /* Perspective Grid Overlay */
+        #persp-grid-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 9997;
+            display: none;
+        }
+
+        /* Polygon Tool Styles */
+        .polygon-point {
+            position: fixed;
+            width: 12px;
+            height: 12px;
+            background: #f80;
+            border: 2px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        .polygon-point.first {
+            background: #0f0;
+            width: 16px;
+            height: 16px;
+        }
+
+        #polygon-preview {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 9998;
+        }
+
+        /* Edit mode tool buttons */
+        .edit-tool-btn {
+            padding: 5px 8px !important;
+            font-size: 10px !important;
+            border: 1px solid rgba(255, 255, 255, 0.3) !important;
+            transition: all 0.2s !important;
+        }
+
+        .edit-tool-btn.active {
+            background: rgba(255, 136, 0, 0.5) !important;
+            border-color: #f80 !important;
+        }
     </style>
 </head>
 <body>
     <div id="brush-cursor"></div>
+    <canvas id="persp-grid-overlay"></canvas>
+    <svg id="polygon-preview"></svg>
     <div id="info">
         <div class="info-row">Current Shader: <span id="current-shader">Loading...</span></div>
 
@@ -193,8 +253,29 @@
 
         <div class="input-section" id="edit-mode-section">
             <div class="info-row" style="color: #f80;">Edit Mode: <span id="edit-mode-value">OFF</span></div>
-            <div class="info-row">Brush Size: <span id="brush-size-value">50</span></div>
-            <input type="range" id="brush-size-slider" min="5" max="200" value="50" style="width: 100%; margin-top: 5px;">
+
+            <!-- Edit Tool Selection -->
+            <div style="margin-top: 5px; display: flex; gap: 3px;">
+                <button id="tool-brush" class="edit-tool-btn active" style="flex: 1;">Brush</button>
+                <button id="tool-polygon" class="edit-tool-btn" style="flex: 1;">Polygon</button>
+            </div>
+
+            <!-- Brush Settings (shown when brush tool active) -->
+            <div id="brush-settings">
+                <div class="info-row" style="margin-top: 5px;">Brush Size: <span id="brush-size-value">50</span></div>
+                <input type="range" id="brush-size-slider" min="5" max="200" value="50" style="width: 100%; margin-top: 3px;">
+            </div>
+
+            <!-- Polygon Settings (shown when polygon tool active) -->
+            <div id="polygon-settings" style="display: none;">
+                <div class="info-row" style="margin-top: 5px; font-size: 10px;">Points: <span id="polygon-points-count">0</span></div>
+                <div style="margin-top: 5px; display: flex; gap: 3px;">
+                    <button id="polygon-close-btn" style="flex: 1; font-size: 10px; padding: 3px;">Close Polygon</button>
+                    <button id="polygon-cancel-btn" style="flex: 1; font-size: 10px; padding: 3px;">Cancel</button>
+                </div>
+                <div class="info-row" style="margin-top: 3px; font-size: 9px; opacity: 0.6;">Click to add points | First point to close</div>
+            </div>
+
             <div style="margin-top: 5px; display: flex; gap: 5px;">
                 <button id="clear-mask-button" style="flex: 1; font-size: 10px; padding: 3px;">Clear</button>
                 <button id="undo-mask-button" style="flex: 1; font-size: 10px; padding: 3px;">Undo</button>
@@ -203,7 +284,8 @@
             <div style="margin-top: 5px;">
                 <button id="reset-persp-button" style="width: 100%; font-size: 10px; padding: 3px;">Reset Perspective</button>
             </div>
-            <div class="info-row" style="margin-top: 5px; font-size: 9px; opacity: 0.6;">Mouse=Erase | Shift=Restore | Corners=Perspective</div>
+            <div class="info-row" style="margin-top: 5px; font-size: 9px; opacity: 0.6;">Brush: Mouse=Erase | Shift=Restore</div>
+            <div class="info-row" style="font-size: 9px; opacity: 0.6;">Corners=Perspective (with grid)</div>
         </div>
 
         <div class="input-section">

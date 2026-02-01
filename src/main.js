@@ -424,10 +424,11 @@ class ShaderRenderer {
             u_audioToZoom: 0.0,
             u_mirrorSplit: 0.5,  // Default: no shift (centered)
             u_mirrorSegments: 2,
-            u_perspTL: { x: 0.0, y: 1.0 },
-            u_perspTR: { x: 1.0, y: 1.0 },
-            u_perspBL: { x: 0.0, y: 0.0 },
-            u_perspBR: { x: 1.0, y: 0.0 },
+            // Screen coords: (0,0) = top-left, (1,1) = bottom-right
+            u_perspTL: { x: 0.0, y: 0.0 },
+            u_perspTR: { x: 1.0, y: 0.0 },
+            u_perspBL: { x: 0.0, y: 1.0 },
+            u_perspBR: { x: 1.0, y: 1.0 },
             u_perspActive: false
         };
 
@@ -452,6 +453,13 @@ class ShaderRenderer {
 
         // Handle window resize
         window.addEventListener('resize', () => this.onResize());
+
+        // Store reference to app for resize handler
+        this.app = null;
+    }
+
+    setApp(app) {
+        this.app = app;
     }
 
     initMaskCanvas() {
@@ -635,10 +643,29 @@ class ShaderRenderer {
                 return rgb + m;
             }
 
+            // Check if point is inside a quad using cross products
+            float crossSign(vec2 a, vec2 b, vec2 p) {
+                return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+            }
+
+            bool pointInQuad(vec2 p, vec2 tl, vec2 tr, vec2 br, vec2 bl) {
+                // Check if point is on the same side of all edges
+                float d1 = crossSign(tl, tr, p);
+                float d2 = crossSign(tr, br, p);
+                float d3 = crossSign(br, bl, p);
+                float d4 = crossSign(bl, tl, p);
+
+                bool hasNeg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0) || (d4 < 0.0);
+                bool hasPos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0) || (d4 > 0.0);
+
+                return !(hasNeg && hasPos);
+            }
+
             ${fragmentShader}
 
             void main() {
                 vec2 fragCoord = gl_FragCoord.xy;
+                vec2 screenUV = fragCoord / iResolution.xy;
 
                 // Calculate audio modulation (bass is most impactful)
                 float audioMod = u_audioBass;
@@ -649,13 +676,30 @@ class ShaderRenderer {
                 fragCoord = (fragCoord - center) / dynamicZoom + center;
 
                 // Apply perspective transformation first
+                bool outsidePerspective = false;
                 if (u_perspActive) {
-                    vec2 uv = fragCoord / iResolution.xy;
+                    // Screen UV: (0,0) = bottom-left in WebGL, but our corners use (0,0) = top-left
+                    // So we need to flip Y for the check
+                    vec2 checkUV = vec2(screenUV.x, 1.0 - screenUV.y);
 
-                    // Bilinear interpolation for perspective
+                    // Check if screen point is inside the perspective quad
+                    if (!pointInQuad(checkUV, u_perspTL, u_perspTR, u_perspBR, u_perspBL)) {
+                        outsidePerspective = true;
+                    }
+
+                    // Bilinear interpolation for perspective correction
+                    // Map from screen position to texture position
+                    vec2 uv = fragCoord / iResolution.xy;
+                    // Flip Y to match our screen coordinate system
+                    float screenY = 1.0 - uv.y;
+
+                    // Interpolate: top edge at screenY=0, bottom edge at screenY=1
                     vec2 topInterp = mix(u_perspTL, u_perspTR, uv.x);
                     vec2 bottomInterp = mix(u_perspBL, u_perspBR, uv.x);
-                    vec2 perspUV = mix(bottomInterp, topInterp, uv.y);
+                    vec2 perspUV = mix(topInterp, bottomInterp, screenY);
+
+                    // Convert back to shader coords (flip Y back)
+                    perspUV.y = 1.0 - perspUV.y;
 
                     fragCoord = perspUV * iResolution.xy;
                 }
@@ -751,6 +795,12 @@ class ShaderRenderer {
                     maskAlpha = texture2D(u_maskTexture, maskUV).r;
                 }
 
+                // Black outside perspective area
+                if (outsidePerspective) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                    return;
+                }
+
                 gl_FragColor = vec4(finalColor * maskAlpha, color.a * maskAlpha);
             }
         `;
@@ -786,10 +836,11 @@ class ShaderRenderer {
                 u_audioToZoom: { value: this.globalUniforms.u_audioToZoom },
                 u_mirrorSplit: { value: this.globalUniforms.u_mirrorSplit },
                 u_mirrorSegments: { value: this.globalUniforms.u_mirrorSegments },
-                u_perspTL: { value: new THREE.Vector2(0.0, 1.0) },
-                u_perspTR: { value: new THREE.Vector2(1.0, 1.0) },
-                u_perspBL: { value: new THREE.Vector2(0.0, 0.0) },
-                u_perspBR: { value: new THREE.Vector2(1.0, 0.0) },
+                // Screen coords: (0,0) = top-left, (1,1) = bottom-right
+                u_perspTL: { value: new THREE.Vector2(0.0, 0.0) },
+                u_perspTR: { value: new THREE.Vector2(1.0, 0.0) },
+                u_perspBL: { value: new THREE.Vector2(0.0, 1.0) },
+                u_perspBR: { value: new THREE.Vector2(1.0, 1.0) },
                 u_perspActive: { value: false },
                 u_videoTexture: { value: null },
                 u_hasVideo: { value: false },
@@ -957,6 +1008,12 @@ class ShaderRenderer {
             }
         }
 
+        // Resize perspective grid canvas (via app reference)
+        if (this.app && this.app.perspGridCanvas) {
+            this.app.perspGridCanvas.width = width;
+            this.app.perspGridCanvas.height = height;
+        }
+
         Logger.system('Window resized:', { width, height });
     }
 }
@@ -982,18 +1039,35 @@ class ShaderMIDIApp {
 
         // Perspective handles
         this.perspectiveHandles = [];
+        // Screen coordinates: (0,0) = top-left, (1,1) = bottom-right
         this.perspectiveCorners = {
-            tl: { x: 0.0, y: 1.0 },
-            tr: { x: 1.0, y: 1.0 },
-            bl: { x: 0.0, y: 0.0 },
-            br: { x: 1.0, y: 0.0 }
+            tl: { x: 0.0, y: 0.0 },
+            tr: { x: 1.0, y: 0.0 },
+            bl: { x: 0.0, y: 1.0 },
+            br: { x: 1.0, y: 1.0 }
         };
         this.activePerspHandle = null;
         this.perspectiveDirty = false;
+
+        // Perspective grid overlay
+        this.perspGridCanvas = null;
+        this.perspGridCtx = null;
+        this.showPerspGrid = false;
+
+        // Edit tool selection: 'brush' or 'polygon'
+        this.currentEditTool = 'brush';
+
+        // Polygon tool state
+        this.polygonPoints = [];
+        this.polygonPointElements = [];
+        this.polygonPreview = null;
     }
 
     async init() {
         Logger.system('Initializing Shader MIDI Player...');
+
+        // Set app reference on renderer for resize handling
+        this.renderer.setApp(this);
 
         // Load shaders
         const shadersLoaded = await this.shaderManager.loadShaderList();
@@ -1150,6 +1224,39 @@ class ShaderMIDIApp {
         // Get brush cursor element
         this.brushCursor = document.getElementById('brush-cursor');
 
+        // Setup perspective grid overlay
+        this.perspGridCanvas = document.getElementById('persp-grid-overlay');
+        if (this.perspGridCanvas) {
+            this.perspGridCanvas.width = window.innerWidth;
+            this.perspGridCanvas.height = window.innerHeight;
+            this.perspGridCtx = this.perspGridCanvas.getContext('2d');
+        }
+
+        // Setup polygon preview SVG
+        this.polygonPreview = document.getElementById('polygon-preview');
+
+        // Setup tool selection buttons
+        const brushToolBtn = document.getElementById('tool-brush');
+        const polygonToolBtn = document.getElementById('tool-polygon');
+
+        if (brushToolBtn) {
+            brushToolBtn.addEventListener('click', () => this.setEditTool('brush'));
+        }
+        if (polygonToolBtn) {
+            polygonToolBtn.addEventListener('click', () => this.setEditTool('polygon'));
+        }
+
+        // Setup polygon buttons
+        const polygonCloseBtn = document.getElementById('polygon-close-btn');
+        const polygonCancelBtn = document.getElementById('polygon-cancel-btn');
+
+        if (polygonCloseBtn) {
+            polygonCloseBtn.addEventListener('click', () => this.closePolygon());
+        }
+        if (polygonCancelBtn) {
+            polygonCancelBtn.addEventListener('click', () => this.cancelPolygon());
+        }
+
         // Setup brush size slider
         const brushSlider = document.getElementById('brush-size-slider');
         if (brushSlider) {
@@ -1206,6 +1313,14 @@ class ShaderMIDIApp {
             if (!this.editMode) return;
             // Don't draw if dragging a perspective handle
             if (this.activePerspHandle) return;
+
+            // Handle based on current tool
+            if (this.currentEditTool === 'polygon') {
+                this.handlePolygonClick(e.clientX, e.clientY);
+                return;
+            }
+
+            // Brush tool
             // Save state before starting to draw
             this.renderer.saveToHistory();
             this.isDrawing = true;
@@ -1214,13 +1329,18 @@ class ShaderMIDIApp {
 
         canvas.addEventListener('mousemove', (e) => {
             // Update brush cursor position
-            if (this.brushCursor && this.editMode) {
+            if (this.brushCursor && this.editMode && this.currentEditTool === 'brush') {
                 this.brushCursor.style.left = (e.clientX - this.brushSize / 2) + 'px';
                 this.brushCursor.style.top = (e.clientY - this.brushSize / 2) + 'px';
             }
 
-            // Draw if mouse is down
-            if (!this.editMode || !this.isDrawing) return;
+            // Update polygon preview line
+            if (this.editMode && this.currentEditTool === 'polygon' && this.polygonPoints.length > 0) {
+                this.updatePolygonPreview(e.clientX, e.clientY);
+            }
+
+            // Draw if mouse is down (brush tool only)
+            if (!this.editMode || !this.isDrawing || this.currentEditTool !== 'brush') return;
             this.drawAtPosition(e.clientX, e.clientY, e.shiftKey);
         });
 
@@ -1313,6 +1433,9 @@ class ShaderMIDIApp {
         e.stopPropagation();
         this.activePerspHandle = { corner, handle };
         handle.style.borderColor = '#f80';
+
+        // Show perspective grid
+        this.showPerspectiveGrid(true);
     }
 
     onPerspectiveDrag(e) {
@@ -1331,20 +1454,263 @@ class ShaderMIDIApp {
         handle.style.bottom = 'auto';
 
         // Update perspective corner (normalized 0-1)
+        // Y is NOT flipped here - shader handles the flip
         const normX = e.clientX / window.innerWidth;
-        const normY = 1.0 - (e.clientY / window.innerHeight); // Flip Y for shader
+        const normY = e.clientY / window.innerHeight;
 
         this.perspectiveCorners[corner] = { x: normX, y: normY };
         this.perspectiveDirty = true;
 
         // Update shader uniforms
         this.updatePerspectiveUniforms();
+
+        // Update grid while dragging
+        if (this.showPerspGrid) {
+            this.drawPerspectiveGrid();
+        }
     }
 
     stopPerspectiveDrag() {
         if (this.activePerspHandle) {
             this.activePerspHandle.handle.style.borderColor = 'white';
             this.activePerspHandle = null;
+
+            // Hide perspective grid
+            this.showPerspectiveGrid(false);
+        }
+    }
+
+    showPerspectiveGrid(show) {
+        this.showPerspGrid = show;
+        if (this.perspGridCanvas) {
+            this.perspGridCanvas.style.display = show ? 'block' : 'none';
+            if (show) {
+                this.drawPerspectiveGrid();
+            }
+        }
+    }
+
+    drawPerspectiveGrid() {
+        if (!this.perspGridCtx || !this.perspGridCanvas) return;
+
+        const ctx = this.perspGridCtx;
+        const w = this.perspGridCanvas.width;
+        const h = this.perspGridCanvas.height;
+
+        // Clear
+        ctx.clearRect(0, 0, w, h);
+
+        // Get corner positions in screen space (coords are already screen-based: 0,0 = top-left)
+        const c = this.perspectiveCorners;
+        const tl = { x: c.tl.x * w, y: c.tl.y * h };
+        const tr = { x: c.tr.x * w, y: c.tr.y * h };
+        const bl = { x: c.bl.x * w, y: c.bl.y * h };
+        const br = { x: c.br.x * w, y: c.br.y * h };
+
+        // Draw grid lines
+        ctx.strokeStyle = 'rgba(255, 136, 0, 0.6)';
+        ctx.lineWidth = 1;
+
+        const gridLines = 8; // Number of grid divisions
+
+        // Draw horizontal lines (interpolated between left and right edges)
+        for (let i = 0; i <= gridLines; i++) {
+            const t = i / gridLines;
+            // Left edge point
+            const leftX = tl.x + (bl.x - tl.x) * t;
+            const leftY = tl.y + (bl.y - tl.y) * t;
+            // Right edge point
+            const rightX = tr.x + (br.x - tr.x) * t;
+            const rightY = tr.y + (br.y - tr.y) * t;
+
+            ctx.beginPath();
+            ctx.moveTo(leftX, leftY);
+            ctx.lineTo(rightX, rightY);
+            ctx.stroke();
+        }
+
+        // Draw vertical lines (interpolated between top and bottom edges)
+        for (let i = 0; i <= gridLines; i++) {
+            const t = i / gridLines;
+            // Top edge point
+            const topX = tl.x + (tr.x - tl.x) * t;
+            const topY = tl.y + (tr.y - tl.y) * t;
+            // Bottom edge point
+            const bottomX = bl.x + (br.x - bl.x) * t;
+            const bottomY = bl.y + (br.y - bl.y) * t;
+
+            ctx.beginPath();
+            ctx.moveTo(topX, topY);
+            ctx.lineTo(bottomX, bottomY);
+            ctx.stroke();
+        }
+
+        // Draw outer border thicker
+        ctx.strokeStyle = 'rgba(255, 136, 0, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(tl.x, tl.y);
+        ctx.lineTo(tr.x, tr.y);
+        ctx.lineTo(br.x, br.y);
+        ctx.lineTo(bl.x, bl.y);
+        ctx.closePath();
+        ctx.stroke();
+    }
+
+    // ============================================
+    // Edit Tool Selection
+    // ============================================
+    setEditTool(tool) {
+        this.currentEditTool = tool;
+
+        // Update button styles
+        const brushBtn = document.getElementById('tool-brush');
+        const polygonBtn = document.getElementById('tool-polygon');
+        const brushSettings = document.getElementById('brush-settings');
+        const polygonSettings = document.getElementById('polygon-settings');
+
+        if (brushBtn) brushBtn.classList.toggle('active', tool === 'brush');
+        if (polygonBtn) polygonBtn.classList.toggle('active', tool === 'polygon');
+
+        if (brushSettings) brushSettings.style.display = tool === 'brush' ? 'block' : 'none';
+        if (polygonSettings) polygonSettings.style.display = tool === 'polygon' ? 'block' : 'none';
+
+        // Update body class for cursor
+        document.body.classList.toggle('polygon-mode', tool === 'polygon');
+
+        // Clear polygon points when switching away
+        if (tool !== 'polygon') {
+            this.cancelPolygon();
+        }
+
+        Logger.system(`Edit tool: ${tool}`);
+    }
+
+    // ============================================
+    // Polygon Tool Methods
+    // ============================================
+    handlePolygonClick(x, y) {
+        // Check if clicking near first point to close polygon
+        if (this.polygonPoints.length >= 3) {
+            const first = this.polygonPoints[0];
+            const dist = Math.sqrt((x - first.x) ** 2 + (y - first.y) ** 2);
+            if (dist < 20) {
+                this.closePolygon();
+                return;
+            }
+        }
+
+        // Add new point
+        this.polygonPoints.push({ x, y });
+
+        // Create visual point marker
+        const pointEl = document.createElement('div');
+        pointEl.className = 'polygon-point' + (this.polygonPoints.length === 1 ? ' first' : '');
+        pointEl.style.left = x + 'px';
+        pointEl.style.top = y + 'px';
+        document.body.appendChild(pointEl);
+        this.polygonPointElements.push(pointEl);
+
+        // Update UI
+        this.updateUI('polygon-points-count', this.polygonPoints.length);
+
+        // Update preview
+        this.updatePolygonPreview(x, y);
+
+        Logger.system(`Polygon point added: ${this.polygonPoints.length}`);
+    }
+
+    updatePolygonPreview(mouseX, mouseY) {
+        if (!this.polygonPreview || this.polygonPoints.length === 0) return;
+
+        // Build SVG path
+        let pathD = '';
+        this.polygonPoints.forEach((p, i) => {
+            pathD += (i === 0 ? 'M' : 'L') + p.x + ',' + p.y + ' ';
+        });
+
+        // Add line to mouse position
+        pathD += 'L' + mouseX + ',' + mouseY;
+
+        // Create/update path element
+        this.polygonPreview.innerHTML = `
+            <path d="${pathD}" fill="none" stroke="rgba(255,136,0,0.8)" stroke-width="2" stroke-dasharray="5,5"/>
+            ${this.polygonPoints.length >= 3 ? `
+                <line x1="${mouseX}" y1="${mouseY}" x2="${this.polygonPoints[0].x}" y2="${this.polygonPoints[0].y}"
+                      stroke="rgba(0,255,0,0.5)" stroke-width="2" stroke-dasharray="3,3"/>
+            ` : ''}
+        `;
+    }
+
+    closePolygon() {
+        if (this.polygonPoints.length < 3) {
+            Logger.system('Need at least 3 points to close polygon');
+            return;
+        }
+
+        // Save history before drawing
+        this.renderer.saveToHistory();
+
+        // Draw the polygon on mask (as black = erase/cut out)
+        this.drawPolygonOnMask(this.polygonPoints, true);
+
+        // Update mask state BEFORE cleaning up visuals
+        this.maskDirty = true;
+        this.renderer.setMaskActive(true);
+        this.renderer.updateMaskTexture();
+
+        // Clean up visuals
+        this.clearPolygonVisuals();
+        this.polygonPoints = [];
+
+        this.updateUI('polygon-points-count', '0');
+        Logger.system('Polygon closed and applied to mask');
+    }
+
+    cancelPolygon() {
+        this.clearPolygonVisuals();
+        this.polygonPoints = [];
+        this.updateUI('polygon-points-count', '0');
+        Logger.system('Polygon cancelled');
+    }
+
+    clearPolygonVisuals() {
+        // Remove point markers
+        this.polygonPointElements.forEach(el => el.remove());
+        this.polygonPointElements = [];
+
+        // Clear preview
+        if (this.polygonPreview) {
+            this.polygonPreview.innerHTML = '';
+        }
+    }
+
+    drawPolygonOnMask(points, erase = true) {
+        if (!this.renderer.maskCtx || points.length < 3) return;
+
+        const ctx = this.renderer.maskCtx;
+        const canvas = this.renderer.maskCanvas;
+
+        // Convert screen coordinates to canvas coordinates
+        // Flip Y to match shader UV sampling (same as drawOnMask)
+        const canvasPoints = points.map(p => ({
+            x: (p.x / window.innerWidth) * canvas.width,
+            y: (1.0 - p.y / window.innerHeight) * canvas.height
+        }));
+
+        // Draw filled polygon
+        ctx.beginPath();
+        ctx.moveTo(canvasPoints[0].x, canvasPoints[0].y);
+        for (let i = 1; i < canvasPoints.length; i++) {
+            ctx.lineTo(canvasPoints[i].x, canvasPoints[i].y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = erase ? 'black' : 'white';
+        ctx.fill();
+
+        // Update texture
+        if (this.renderer.maskTexture) {
+            this.renderer.maskTexture.needsUpdate = true;
         }
     }
 
@@ -1382,11 +1748,12 @@ class ShaderMIDIApp {
     }
 
     resetPerspective() {
+        // Screen coordinates: (0,0) = top-left, (1,1) = bottom-right
         this.perspectiveCorners = {
-            tl: { x: 0.0, y: 1.0 },
-            tr: { x: 1.0, y: 1.0 },
-            bl: { x: 0.0, y: 0.0 },
-            br: { x: 1.0, y: 0.0 }
+            tl: { x: 0.0, y: 0.0 },
+            tr: { x: 1.0, y: 0.0 },
+            bl: { x: 0.0, y: 1.0 },
+            br: { x: 1.0, y: 1.0 }
         };
         this.perspectiveDirty = false;
 
@@ -1407,19 +1774,19 @@ class ShaderMIDIApp {
             handle.style.bottom = pos.bottom;
         });
 
-        // Reset globalUniforms
-        this.renderer.globalUniforms.u_perspTL = { x: 0.0, y: 1.0 };
-        this.renderer.globalUniforms.u_perspTR = { x: 1.0, y: 1.0 };
-        this.renderer.globalUniforms.u_perspBL = { x: 0.0, y: 0.0 };
-        this.renderer.globalUniforms.u_perspBR = { x: 1.0, y: 0.0 };
+        // Reset globalUniforms (screen coords: 0,0 = top-left)
+        this.renderer.globalUniforms.u_perspTL = { x: 0.0, y: 0.0 };
+        this.renderer.globalUniforms.u_perspTR = { x: 1.0, y: 0.0 };
+        this.renderer.globalUniforms.u_perspBL = { x: 0.0, y: 1.0 };
+        this.renderer.globalUniforms.u_perspBR = { x: 1.0, y: 1.0 };
         this.renderer.globalUniforms.u_perspActive = false;
 
         // Reset shader uniforms
         if (this.renderer.material) {
-            this.renderer.material.uniforms.u_perspTL.value.set(0.0, 1.0);
-            this.renderer.material.uniforms.u_perspTR.value.set(1.0, 1.0);
-            this.renderer.material.uniforms.u_perspBL.value.set(0.0, 0.0);
-            this.renderer.material.uniforms.u_perspBR.value.set(1.0, 0.0);
+            this.renderer.material.uniforms.u_perspTL.value.set(0.0, 0.0);
+            this.renderer.material.uniforms.u_perspTR.value.set(1.0, 0.0);
+            this.renderer.material.uniforms.u_perspBL.value.set(0.0, 1.0);
+            this.renderer.material.uniforms.u_perspBR.value.set(1.0, 1.0);
         }
 
         this.renderer.setPerspectiveActive(false);
@@ -1451,6 +1818,13 @@ class ShaderMIDIApp {
 
         // Show/hide perspective handles
         this.updatePerspectiveHandles();
+
+        // Reset to brush tool and cancel any polygon when exiting edit mode
+        if (!this.editMode) {
+            this.setEditTool('brush');
+            this.cancelPolygon();
+            this.showPerspectiveGrid(false);
+        }
 
         // Keep mask active if it has been drawn on
         // Only disable mask rendering if mask is clean
@@ -1510,10 +1884,36 @@ class ShaderMIDIApp {
                         }
                     }
                     break;
+                case 'b':
+                    // Switch to brush tool
+                    if (this.editMode) {
+                        this.setEditTool('brush');
+                    }
+                    break;
+                case 'g':
+                    // Switch to polygon tool
+                    if (this.editMode) {
+                        this.setEditTool('polygon');
+                    }
+                    break;
+                case 'enter':
+                    // Close polygon
+                    if (this.editMode && this.currentEditTool === 'polygon') {
+                        this.closePolygon();
+                    }
+                    break;
+                case 'escape':
+                    // Cancel polygon or exit edit mode
+                    if (this.editMode && this.currentEditTool === 'polygon' && this.polygonPoints.length > 0) {
+                        this.cancelPolygon();
+                    } else if (this.editMode) {
+                        this.toggleEditMode();
+                    }
+                    break;
             }
         });
 
-        Logger.system('Keyboard controls: Arrow keys/N/P = change shader, H = toggle info, F = fullscreen, E = edit mode');
+        Logger.system('Keyboard: N/P=shader, H=info, F=fullscreen, E=edit, B=brush, G=polygon');
     }
 
     toggleInfo() {
