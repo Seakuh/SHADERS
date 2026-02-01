@@ -1,0 +1,39 @@
+name: Deploy shadertool to ALL-INKL
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Vite Output ist standardmäßig dist/
+      - name: Deploy via SFTP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ALLINKL_HOST }}
+          username: ${{ secrets.ALLINKL_USER }}
+          password: ${{ secrets.ALLINKL_PASSWORD }}
+          port: ${{ secrets.ALLINKL_PORT || 22 }}
+          source: "dist/*"
+          target: "/www/htdocs/shadertool/"
+          strip_components: 1
+          overwrite: true

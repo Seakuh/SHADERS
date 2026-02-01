@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { WebMidi } from 'webmidi';
 import { VideoInputManager } from './VideoInputManager.js';
 import { AudioInputManager } from './AudioInputManager.js';
+// ============================================
+// MIDI
+// ============================================
 
 // ============================================
 // Logger
