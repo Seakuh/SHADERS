@@ -2,6 +2,7 @@
   "name": "shader-midi-player",
   "version": "1.0.0",
   "type": "module",
+  "homepage": "https://vartalt.com/shadertool",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,6 +13,7 @@
     "webmidi": "^3.1.11"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.2",
     "vite": "^5.0.12"
   }
 }

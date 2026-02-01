@@ -305,6 +305,14 @@ class MIDIController {
             }
         }
 
+        // In edit mode, CC3 controls vertical shift
+        if (this.editModeActive && cc === this.mappings.grayscale.value) {
+            // Map 0-1 to -0.5 to 0.5 (shift range)
+            const shift = (value - 0.5);
+            this.onParameterChange('verticalShift', shift);
+            return;
+        }
+
         if (cc === this.mappings.hue.value) {
             // Map 0-1 to 0-360 degrees
             const hue = value * 360;
@@ -429,7 +437,8 @@ class ShaderRenderer {
             u_perspTR: { x: 1.0, y: 0.0 },
             u_perspBL: { x: 0.0, y: 1.0 },
             u_perspBR: { x: 1.0, y: 1.0 },
-            u_perspActive: false
+            u_perspActive: false,
+            u_verticalShift: 0.0  // Vertical image shift (-1 to 1)
         };
 
         // Video and audio textures
@@ -584,6 +593,7 @@ class ShaderRenderer {
             uniform vec2 u_perspBL;  // Bottom-left
             uniform vec2 u_perspBR;  // Bottom-right
             uniform bool u_perspActive;
+            uniform float u_verticalShift;  // Vertical image shift
 
             // Video and audio
             uniform sampler2D u_videoTexture;
@@ -674,6 +684,9 @@ class ShaderRenderer {
                 float dynamicZoom = u_zoom + (audioMod * u_audioToZoom * 2.0);
                 vec2 center = iResolution.xy * 0.5;
                 fragCoord = (fragCoord - center) / dynamicZoom + center;
+
+                // Apply vertical shift
+                fragCoord.y += u_verticalShift * iResolution.y;
 
                 // Apply perspective transformation first
                 bool outsidePerspective = false;
@@ -842,6 +855,7 @@ class ShaderRenderer {
                 u_perspBL: { value: new THREE.Vector2(0.0, 1.0) },
                 u_perspBR: { value: new THREE.Vector2(1.0, 1.0) },
                 u_perspActive: { value: false },
+                u_verticalShift: { value: 0.0 },
                 u_videoTexture: { value: null },
                 u_hasVideo: { value: false },
                 u_audioBass: { value: 0.0 },
