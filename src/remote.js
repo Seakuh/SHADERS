@@ -61,10 +61,57 @@ function buildSliders() {
         const entry = { slider, valueEl, dragging: false };
         sliderRows.set(def.name, entry);
 
-        slider.addEventListener('pointerdown', () => { entry.dragging = true; });
-        slider.addEventListener('pointerup', () => { entry.dragging = false; });
-        slider.addEventListener('pointercancel', () => { entry.dragging = false; });
+        const setFromClientX = (clientX) => {
+            const rect = slider.getBoundingClientRect();
+            const norm = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+            slider.value = String(Math.round(norm * SLIDER_STEPS));
+            valueEl.textContent = def.fmt(def.toScaled(norm));
+            send({ type: 'param', name: def.name, value: norm });
+        };
 
+        // The slider itself ignores pointer events; the wrapper engages it
+        // only once the finger clearly moves horizontally. Vertical swipes
+        // fall through to the browser (touch-action: pan-y) and scroll the
+        // page instead of changing the value.
+        const wrap = document.createElement('div');
+        wrap.className = 'slider-wrap';
+        wrap.appendChild(slider);
+
+        let startX = 0;
+        let startY = 0;
+        let engaged = false;
+        let activePointer = null;
+
+        wrap.addEventListener('pointerdown', (e) => {
+            startX = e.clientX;
+            startY = e.clientY;
+            engaged = false;
+            activePointer = e.pointerId;
+        });
+
+        wrap.addEventListener('pointermove', (e) => {
+            if (e.pointerId !== activePointer) return;
+            if (!engaged) {
+                const dx = Math.abs(e.clientX - startX);
+                const dy = Math.abs(e.clientY - startY);
+                if (dx < 6 || dx <= dy) return; // not a horizontal drag (yet)
+                engaged = true;
+                entry.dragging = true;
+                wrap.setPointerCapture(e.pointerId);
+            }
+            setFromClientX(e.clientX);
+        });
+
+        const release = (e) => {
+            if (e.pointerId !== activePointer) return;
+            engaged = false;
+            entry.dragging = false;
+            activePointer = null;
+        };
+        wrap.addEventListener('pointerup', release);
+        wrap.addEventListener('pointercancel', release);
+
+        // Keyboard / assistive input still lands on the native control
         slider.addEventListener('input', () => {
             const norm = Number(slider.value) / SLIDER_STEPS;
             valueEl.textContent = def.fmt(def.toScaled(norm));
@@ -72,7 +119,7 @@ function buildSliders() {
         });
 
         row.appendChild(label);
-        row.appendChild(slider);
+        row.appendChild(wrap);
         (containers[def.group] || containers.main).appendChild(row);
     }
 }
