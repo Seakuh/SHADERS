@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { WebMidi } from 'webmidi';
 import { VideoInputManager } from './VideoInputManager.js';
 import { AudioInputManager } from './AudioInputManager.js';
+import { RemoteControlManager } from './RemoteControlManager.js';
 // ============================================
 // MIDI
 // ============================================
@@ -1045,6 +1046,7 @@ class ShaderMIDIApp {
         this.midiController = null;
         this.videoManager = null;
         this.audioManager = null;
+        this.remoteControl = null;
         this.infoVisible = true;
 
         // Edit mode state
@@ -1103,6 +1105,10 @@ class ShaderMIDIApp {
         );
         await this.midiController.init();
 
+        // Initialize Remote Control (phone via WebSocket)
+        this.remoteControl = new RemoteControlManager(this);
+        this.remoteControl.init();
+
         // Initialize Video Manager
         this.videoManager = new VideoInputManager((texture) => {
             this.renderer.setVideoTexture(texture);
@@ -1147,8 +1153,14 @@ class ShaderMIDIApp {
             const maxShaders = this.shaderManager.shaders.length;
             const shaderIndex = Math.floor((data / 127) * maxShaders);
             this.shaderManager.setShaderByIndex(shaderIndex);
+        } else if (action === 'setIndex') {
+            // Direct shader index (from phone remote)
+            this.shaderManager.setShaderByIndex(data);
         }
         this.loadCurrentShader();
+
+        // Keep connected phones in sync
+        if (this.remoteControl) this.remoteControl.scheduleBroadcast();
     }
 
     handleParameterChange(param, value) {
@@ -1167,6 +1179,9 @@ class ShaderMIDIApp {
 
         this.renderer.updateGlobalParameter(param, value);
         Logger.system(`Parameter ${param} = ${typeof value === 'number' ? value.toFixed(2) : value}`);
+
+        // Keep connected phones in sync (also updates overlay for remote changes)
+        if (this.remoteControl) this.remoteControl.onLocalParamChange(param, value);
 
         // Automatische Kamera-Aktivierung basierend auf audioToHue
         if (param === 'audioToHue') {
@@ -1849,6 +1864,9 @@ class ShaderMIDIApp {
             this.renderer.setMaskActive(this.editMode);
         }
         // If mask is dirty, always keep it active
+
+        // Keep connected phones in sync
+        if (this.remoteControl) this.remoteControl.scheduleBroadcast();
 
         Logger.system(`Edit mode: ${this.editMode ? 'ON' : 'OFF'}`);
     }

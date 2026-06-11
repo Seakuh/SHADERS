@@ -13,6 +13,7 @@ FOR SCALAR AND THE UNIVERSE
 - 🎨 **Globale Farbmanipulation**: HSL, Saturation, Lightness und Monochrome-Effekte unabhängig vom Shader
 - 🖥️ **Vollbild-Anzeige**: Nur der Shader wird angezeigt
 - 📊 **Ausführliches Logging**: Alle MIDI-Events und Shader-Wechsel werden geloggt
+- 📱 **Phone Remote**: Alle Parameter vom Handy aus steuerbar (QR-Code scannen)
 
 ## Installation
 
@@ -26,7 +27,25 @@ npm install
 npm run dev
 ```
 
-Der Server läuft auf `http://localhost:5173`
+Der Server läuft auf `http://localhost:5173` und ist im lokalen Netzwerk erreichbar.
+
+## 📱 Phone Remote Control
+
+Alle Shader-Parameter lassen sich vom Handy aus steuern:
+
+1. Laptop und Handy ins **gleiche WLAN** (oder Handy-Hotspot)
+2. `npm run dev` starten
+3. Im Info-Overlay (Taste `H`) erscheint ein **QR-Code** – mit dem Handy scannen
+4. Die Remote-Seite öffnet sich (`http://<laptop-ip>:5173/shadertool/remote.html`)
+
+Das Handy zeigt Slider für alle Parameter (Hue, Saturation, Zoom, Speed, Audio-Modulation, ...), Buttons für Shader prev/next, eine Shader-Liste sowie Mirror- und Edit-Mode-Toggles. Mehrere Handys gleichzeitig funktionieren – alle bleiben synchron, auch mit MIDI- oder Tastatur-Änderungen.
+
+### Produktion (ohne Vite)
+
+```bash
+npm run build
+npm run serve   # startet server.js auf Port 8080 (inkl. WebSocket-Relay)
+```
 
 ## MIDI Mapping
 

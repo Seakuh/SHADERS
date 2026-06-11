@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "serve": "node server.js"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
     "three": "^0.160.0",
-    "webmidi": "^3.1.11"
+    "webmidi": "^3.1.11",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.1.2",
