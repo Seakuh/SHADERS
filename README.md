@@ -6,10 +6,14 @@ Ein interaktiver GLSL Shader Player mit vollständiger MIDI-Steuerung.
 
 FOR SCALAR AND THE UNIVERSE
 
+> 📖 **Einsteiger-Handbuch für OSC & NDI:** [HANDBUCH.md](HANDBUCH.md)
+
 ## Features
 
 - ✨ **Automatisches Shader-Loading**: Alle `.glsl` Dateien im Verzeichnis werden automatisch geladen
 - 🎹 **Vollständige MIDI-Integration**: Steuere Shader und Parameter mit MIDI-Controllern
+- 🎛️ **OSC-Eingang**: Vollwertige Alternative zu MIDI — jeder Parameter, jeder Shader, jedes Kommando
+- 📡 **NDI-Ausgang**: Der Shader-Output geht als NDI-Quelle ins Netzwerk (Resolume, OBS, vMix, TouchDesigner)
 - 🎨 **Globale Farbmanipulation**: HSL, Saturation, Lightness und Monochrome-Effekte unabhängig vom Shader
 - 🖥️ **Vollbild-Anzeige**: Nur der Shader wird angezeigt
 - 📊 **Ausführliches Logging**: Alle MIDI-Events und Shader-Wechsel werden geloggt
@@ -18,6 +22,7 @@ FOR SCALAR AND THE UNIVERSE
 
 ```bash
 npm install
+npm run bridge:install    # nur nötig für OSC / NDI
 ```
 
 ## Start
@@ -27,6 +32,12 @@ npm run dev
 ```
 
 Der Server läuft auf `http://localhost:5173`
+
+Für OSC und NDI zusätzlich in einem zweiten Terminal:
+
+```bash
+npm run bridge
+```
 
 ## MIDI Mapping
 
@@ -69,6 +80,156 @@ Der Server läuft auf `http://localhost:5173`
 | **CC 43** | Previous Shader | Vorheriger Shader (> 64 = Trigger) |
 | **CC 44** | Next Shader | Nächster Shader (> 64 = Trigger) |
 | **CC 48** | Mirror | Horizontale Spiegelung (> 64 = AN) |
+
+## OSC & NDI (die Bridge)
+
+Browser können weder UDP-Sockets öffnen noch mit dem NDI-SDK sprechen. Beides
+übernimmt ein kleiner lokaler Begleitprozess in `bridge/`:
+
+```
+OSC-Controller  ──UDP 9000──▶  Bridge  ──WS 9002──▶  Browser
+OSC-Controller  ◀──UDP 9001──  Bridge  ◀──WS 9002──  Browser   (Feedback)
+                                Bridge  ◀──WS 9002──  Browser   (RGBA-Frames)
+                                  │
+                                  └──NDI──▶  Resolume / OBS / vMix / ...
+```
+
+Start:
+
+```bash
+npm run bridge
+```
+
+Die App verbindet sich automatisch und zeigt oben links `OSC Bridge: ...`.
+Läuft die Bridge nicht, funktioniert alles andere unverändert weiter — MIDI,
+Tastatur und Maus sind davon völlig unabhängig.
+
+### Bridge-Optionen
+
+| Flag | Default | Bedeutung |
+|------|---------|-----------|
+| `--osc-in-port <n>` | 9000 | UDP-Port für eingehendes OSC |
+| `--osc-out-port <n>` | 9001 | UDP-Port für Feedback |
+| `--osc-out-host <ip>` | *letzter Absender* | Fixes Feedback-Ziel |
+| `--ws-port <n>` | 9002 | WebSocket-Port für die App |
+| `--ndi-name <name>` | `Shadertool` | Name der NDI-Quelle |
+| `--no-ndi` | – | Nur OSC, kein NDI |
+
+```bash
+npm run bridge -- --osc-in-port 8000 --ndi-name "Vartakt Visuals"
+```
+
+Status jederzeit prüfbar unter `http://127.0.0.1:9002/status`.
+
+## OSC-Mapping
+
+Alle Adressen sind gegenüber Groß-/Kleinschreibung und Trennzeichen tolerant:
+`/param/audioToHue`, `/audio-to-hue` und `/AUDIO_TO_HUE` sind identisch.
+
+### Parameter
+
+Jeder Parameter ist auf drei Wegen erreichbar:
+
+| Form | Beispiel | Wert |
+|------|----------|------|
+| `/param/<name>` | `/param/hue 240` | **Nativer** Wertebereich |
+| `/<name>` | `/hue 240` | Kurzform, ebenfalls nativ |
+| `/param/<name>/norm` | `/param/hue/norm 0.66` | Normalisiert 0.0–1.0 |
+
+Der native Bereich ist der Vorteil gegenüber MIDI: statt 128 Stufen bekommst du
+echte Fließkommawerte.
+
+| Parameter | Nativer Bereich | MIDI-Äquivalent |
+|-----------|-----------------|-----------------|
+| `vibrance` | 0.0 – 1.0 | CC 0 |
+| `hue` | 0 – 360 | CC 1 |
+| `saturation` | 0.0 – 1.0 | CC 2 |
+| `grayscale` | 0.0 – 1.0 | CC 3 |
+| `contrast` | 0.0 – 2.0 | CC 4 |
+| `brightness` | 0.0 – 2.0 | CC 5 |
+| `zoom` | 0.1 – 5.0 | CC 6 |
+| `videoMix` | 0.0 – 1.0 | CC 7 |
+| `speed` | 0.0 – 4.0 | CC 16 |
+| `audioIntensity` | 0.0 – 1.0 | CC 17 |
+| `audioToHue` | 0.0 – 1.0 | CC 23 |
+| `audioToSaturation` | 0.0 – 1.0 | CC 24 |
+| `audioToBrightness` | 0.0 – 1.0 | CC 25 |
+| `audioToZoom` | 0.0 – 1.0 | CC 26 |
+| `mirror` | 0 / 1 | CC 48 |
+| `brushSize` | 5 – 200 | CC 61 |
+| `mirrorSplit` | 0.0 – 1.0 | CC 0 (nur in Edit+Mirror) |
+| `mirrorSegments` | 2 – 32 | CC 1 (nur in Edit+Mirror) |
+| `verticalShift` | -0.5 – 0.5 | CC 3 (nur in Edit) |
+
+Die letzten drei sind über MIDI nur in bestimmten Modi erreichbar — über OSC
+immer direkt.
+
+### Shader
+
+| Adresse | Argument | Funktion |
+|---------|----------|----------|
+| `/shader/next` | – | Nächster Shader |
+| `/shader/prev` | – | Vorheriger Shader |
+| `/shader/index` | int | Exakter Index |
+| `/shader/fraction` | 0.0–1.0 | Fader über die ganze Liste |
+| `/shader/name` | string | Nach Dateinamen (mit oder ohne `.glsl`) |
+| `/shader/list` | – | Liste in die Browser-Konsole |
+
+### Edit-Mode, Maske, Perspektive
+
+| Adresse | Argument | Funktion |
+|---------|----------|----------|
+| `/edit/mode` | 0/1 | Edit-Mode an/aus |
+| `/edit/toggle` | – | Umschalten |
+| `/edit/tool` | `brush` / `polygon` | Werkzeug wählen |
+| `/mask/clear` | – | Maske löschen |
+| `/mask/undo` | – | Letzten Schritt zurück |
+| `/mask/invert` | – | Maske invertieren |
+| `/persp/tl` .. `/persp/br` | x y (0–1) | Eckpunkt setzen |
+| `/persp/reset` | – | Perspektive zurücksetzen |
+
+### Ausgabe & System
+
+| Adresse | Argument | Funktion |
+|---------|----------|----------|
+| `/ndi/enable` | 0/1 | NDI-Ausgang an/aus |
+| `/ndi/fps` | 1–60 | Ziel-Framerate |
+| `/ndi/resolution` | w h | Auflösung, z. B. `1920 1080` |
+| `/fullscreen` | – | Vollbild umschalten |
+| `/info` | – | Overlay umschalten |
+| `/sync` | – | Kompletten Zustand zurücksenden |
+
+### Feedback
+
+Jede Änderung — egal ob per MIDI, Maus, Tastatur oder OSC — wird als OSC
+zurückgeschickt, sowohl nativ (`/param/hue 240`) als auch normalisiert
+(`/param/hue/norm 0.667`). Damit bleiben Motorfader und TouchOSC-Layouts
+synchron. `/sync` fordert den kompletten Zustand an, z. B. beim Verbinden.
+
+Eingehende Nachrichten werden nicht zurückgespiegelt, damit ein Controller
+seine eigene Bewegung nicht als Echo zurückbekommt.
+
+## NDI-Ausgang
+
+Im Overlay: **Start NDI Output**, dazu Auflösung (Default 1280×720) und
+Framerate (Default 30). Die Quelle heißt `<RECHNERNAME> (Shadertool)` und
+erscheint automatisch in Resolume, OBS (via DistroAV), vMix, TouchDesigner
+oder dem NDI Studio Monitor.
+
+Technisch: Der Canvas wird per `blitFramebuffer` aufgelöst, skaliert und
+gleichzeitig vertikal gespiegelt (OpenGL rendert bottom-up, NDI erwartet
+top-down), dann asynchron über Pixel Buffer Objects mit Fences ausgelesen. Der
+Renderloop wartet dadurch nie auf die GPU — die Frames kommen ein bis zwei
+Frames verzögert an, was im Videosignal unsichtbar ist.
+
+Ein paar Hinweise:
+
+- **Bandbreite**: Die Frames gehen unkomprimiert über den lokalen Socket.
+  1280×720@30 sind ca. 110 MB/s, 1920×1080@30 ca. 250 MB/s. Bei Aussetzern
+  Auflösung oder Framerate reduzieren; bei Überlastung werden Frames
+  verworfen statt Latenz aufzubauen.
+- **WebGL2** ist Voraussetzung. Ohne WebGL2 zeigt das Overlay `unavailable`.
+- **Nur der Shader-Canvas** landet im NDI-Signal, nicht das Info-Overlay.
 
 ## Tastatursteuerung
 
@@ -139,12 +300,24 @@ Wenn kein MIDI-Controller verfügbar ist, funktionieren die Tastatursteuerung un
 
 ```
 SHADERS/
-├── index.html          # HTML mit Fullscreen-Canvas
-├── main.js             # Hauptanwendung
-├── package.json        # Dependencies
-├── *.glsl              # Deine Shader-Dateien
-└── README.md           # Diese Datei
+├── index.html              # HTML mit Fullscreen-Canvas
+├── src/
+│   ├── main.js             # Hauptanwendung
+│   ├── params.js           # Parameter-Registry (MIDI + OSC teilen sie sich)
+│   ├── OSCController.js    # OSC-Eingang und -Feedback
+│   ├── NDIOutput.js        # Frame-Capture für NDI
+│   ├── AudioInputManager.js
+│   └── VideoInputManager.js
+├── bridge/
+│   ├── server.js           # OSC-UDP- und NDI-Begleitprozess
+│   └── package.json        # Eigene Dependencies (native NDI-Bindings)
+├── shaders/*.glsl          # Deine Shader-Dateien
+├── package.json            # Dependencies
+└── README.md               # Diese Datei
 ```
+
+Die Bridge hat bewusst ein eigenes `package.json`: Die NDI-Bindings sind ein
+natives Modul und haben im Static-Build der Web-App nichts zu suchen.
 
 ## Troubleshooting
 
@@ -163,25 +336,53 @@ SHADERS/
 - Versuche die Browser-Auflösung zu reduzieren
 - Schließe andere Browser-Tabs
 
+### OSC kommt nicht an
+- Läuft die Bridge? `npm run bridge`, Status unter `http://127.0.0.1:9002/status`
+- Zeigt das Overlay `OSC Bridge: offline`, erreicht die App die Bridge nicht
+- Sendet der Controller wirklich auf UDP-Port 9000?
+- Firewall prüfen, wenn der Controller auf einem anderen Gerät läuft
+  (z. B. Tablet mit TouchOSC) — die Bridge lauscht auf `0.0.0.0`
+- Unbekannte Adressen werden in der Browser-Konsole als
+  `Unhandled OSC address` geloggt
+
+### NDI-Quelle taucht nicht auf
+- Ist der NDI-Ausgang im Overlay aktiviert?
+- Zeigt der Status `unavailable`, fehlt WebGL2 im Browser
+- Meldet die Bridge `grandi ... not installed`: `npm run bridge:install`
+- NDI arbeitet mit mDNS-Discovery — Sender und Empfänger müssen im selben
+  Subnetz sein
+
+### Bridge-Verbindung wird vom Browser blockiert
+Wird die App über HTTPS ausgeliefert, blockieren manche Browser die
+Verbindung zu `ws://127.0.0.1`. Am einfachsten lokal über `npm run dev`
+arbeiten. Ein abweichender Bridge-Port lässt sich per Query-Parameter setzen:
+`?bridge=ws://127.0.0.1:9500`
+
 ## Erweiterte Anpassungen
 
-### MIDI-Mapping ändern
+### MIDI-Mapping und Parameter ändern
 
-In `main.js` findest du die MIDI-Mappings in der `MIDIController` Klasse:
+MIDI und OSC teilen sich eine gemeinsame Registry in `src/params.js`. Ein
+Eintrag definiert CC-Nummer, Wertebereich, Default und die Anzeige im Overlay —
+und legt damit gleichzeitig die OSC-Adresse fest:
 
 ```javascript
-this.mappings = {
-    hue: { type: 'cc', value: 1 },                // CC1 - Hue rotation
-    saturation: { type: 'cc', value: 2 },         // CC2 - Saturation
-    shaderPrev: { type: 'cc', value: 3 },         // CC3 - Previous shader
-    shaderNext: { type: 'cc', value: 4 },         // CC4 - Next shader
-    zoom: { type: 'cc', value: 5 },               // CC5 - Zoom
-    speed: { type: 'cc', value: 16 },             // CC16 - Speed
-    mirror: { type: 'cc', value: 60 },            // CC60 - Mirror toggle
-};
+{ name: 'hue', cc: 1, min: 0, max: 360, def: 0, ui: 'hue-value', digits: 1 },
 ```
 
-Passe die Werte an dein MIDI-Setup an.
+CC-Nummer ändern, Bereich erweitern oder einen neuen Parameter ergänzen: Es
+gibt nur diese eine Stelle. MIDI, OSC, OSC-Feedback und Overlay ziehen
+automatisch nach.
+
+Momentane Trigger (kein Wert, nur Auslöser) stehen darunter in `TRIGGER_CCS`:
+
+```javascript
+export const TRIGGER_CCS = {
+    shaderPrev: 43,
+    shaderNext: 44,
+    editMode: 60,
+};
+```
 
 ## Build für Produktion
 

@@ -205,6 +205,12 @@
             background: rgba(255, 136, 0, 0.5) !important;
             border-color: #f80 !important;
         }
+
+        /* Output (NDI) controls */
+        .output-btn.active {
+            background: rgba(0, 200, 255, 0.35);
+            border-color: #0cf;
+        }
     </style>
 </head>
 <body>
@@ -244,6 +250,31 @@
             </select>
             <input type="file" id="audio-file" accept="audio/*" style="display:none;">
             <canvas id="audio-canvas"></canvas>
+        </div>
+
+        <div class="info-interactive input-section">
+            <div class="input-label">OSC Bridge: <span id="osc-status" style="color: #0cf;">offline</span></div>
+        </div>
+
+        <div class="info-interactive input-section">
+            <div class="input-label">NDI Output: <span id="ndi-status">off</span></div>
+            <button id="ndi-toggle" class="output-btn">Start NDI Output</button>
+            <div style="margin-top: 5px; display: flex; gap: 3px;">
+                <select id="ndi-resolution" style="flex: 2;">
+                    <option value="1280x720">1280 x 720</option>
+                    <option value="1920x1080">1920 x 1080</option>
+                    <option value="960x540">960 x 540</option>
+                    <option value="auto">Match window</option>
+                </select>
+                <select id="ndi-fps" style="flex: 1;">
+                    <option value="30">30 fps</option>
+                    <option value="60">60 fps</option>
+                    <option value="25">25 fps</option>
+                </select>
+            </div>
+            <div class="info-row" style="margin-top: 3px; font-size: 9px; opacity: 0.6;">
+                <span id="ndi-receivers">bridge offline</span>
+            </div>
         </div>
 
         <div class="input-section">
@@ -300,6 +331,7 @@
         <div class="info-row">Mirror: <span id="mirror-value">OFF</span> | Shift: <span id="mirror-split-value">0.50</span> | Seg: <span id="mirror-segments-value">2</span></div>
         <div class="info-row" style="margin-top: 5px; font-size: 10px; opacity: 0.7;">H=info | E=edit | F=fullscreen</div>
         <div id="last-midi-event" class="info-row" style="margin-top: 8px; font-size: 10px; color: #0f0; opacity: 0.8;"></div>
+        <div id="last-osc-event" class="info-row" style="font-size: 10px; color: #0cf; opacity: 0.8;"></div>
     </div>
     <script type="module" src="/src/main.js"></script>
 </body>

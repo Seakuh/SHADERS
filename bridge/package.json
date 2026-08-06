@@ -1,0 +1,21 @@
+{
+  "name": "shadertool-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local companion for Shader MIDI Player: OSC (UDP) input and NDI video output",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20.19.5"
+  },
+  "dependencies": {
+    "osc": "^2.4.5",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "grandi": "^2.0.2"
+  }
+}

@@ -2,6 +2,17 @@ import * as THREE from 'three';
 import { WebMidi } from 'webmidi';
 import { VideoInputManager } from './VideoInputManager.js';
 import { AudioInputManager } from './AudioInputManager.js';
+import { OSCController } from './OSCController.js';
+import { NDIOutput } from './NDIOutput.js';
+import {
+    PARAMS,
+    PARAM_BY_CC,
+    PARAM_BY_NAME,
+    TRIGGER_CCS,
+    fromNorm,
+    formatValue,
+    normaliseValue,
+} from './params.js';
 // ============================================
 // MIDI
 // ============================================
@@ -25,6 +36,14 @@ class Logger {
 
     static system(message, data) {
         this.log('SYSTEM', message, data);
+    }
+
+    static osc(message, data) {
+        this.log('OSC', message, data);
+    }
+
+    static ndi(message, data) {
+        this.log('NDI', message, data);
     }
 }
 
@@ -104,35 +123,17 @@ class MIDIController {
         this.currentInput = null;
         this.selector = null;
 
-        // MIDI Mappings
-        this.mappings = {
-            // -------------- FADER CONTROLS --------------
-            vibrance: { type: 'cc', value: 0 },            // CC0 - Vibrance
-            hue: { type: 'cc', value: 1 },                // CC1 - Hue rotation
-            saturation: { type: 'cc', value: 2 },         // CC2 - Saturation
-            grayscale: { type: 'cc', value: 3 },            // CC3 - Grayscale
-            contrast: { type: 'cc', value: 4 },            // CC4 - Contrast
-            brightness: { type: 'cc', value: 5 },            // CC5 - Brightness
-            zoom: { type: 'cc', value: 6 },               // CC6 - Zoom
-            videoMix: { type: 'cc', value: 7 },           // CC7 - Video mix amount
-            speed: { type: 'cc', value: 16 },             // CC16 - Speed
-            audioIntensity: { type: 'cc', value: 17 },    // CC17 - Audio intensity
-
-            // -------------- AUDIO MODULATION --------------
-            audioToHue: { type: 'cc', value: 23 },        // CC23 - Audio modulates Hue
-            audioToSaturation: { type: 'cc', value: 24 }, // CC24 - Audio modulates Saturation
-            audioToBrightness: { type: 'cc', value: 25 }, // CC25 - Audio modulates Brightness
-            audioToZoom: { type: 'cc', value: 26 },       // CC26 - Audio modulates Zoom
-
-            // -------------- SHADER NAVIGATION --------------
-            shaderPrev: { type: 'cc', value: 43 },         // CC43 - Previous shader
-            shaderNext: { type: 'cc', value: 44 },         // CC44 - Next shader
-            mirror: { type: 'cc', value: 48 },            // CC48 - Mirror toggle (threshold 0.5)
-
-            // -------------- EDIT MODE --------------
-            editMode: { type: 'cc', value: 60 },          // CC60 - Toggle edit mode
-            brushSize: { type: 'cc', value: 61 },         // CC61 - Brush size
-        };
+        // MIDI mappings are derived from the shared parameter registry
+        // (src/params.js) so MIDI and OSC can never drift apart.
+        this.mappings = {};
+        for (const param of PARAMS) {
+            if (param.cc !== null && param.cc !== undefined) {
+                this.mappings[param.name] = { type: 'cc', value: param.cc };
+            }
+        }
+        for (const [name, cc] of Object.entries(TRIGGER_CCS)) {
+            this.mappings[name] = { type: 'cc', value: cc };
+        }
 
         // Track mirror and edit mode state for CC0/CC1 mode switching
         this.mirrorActive = false;
@@ -292,18 +293,16 @@ class MIDIController {
     }
 
     handleCC(cc, value) {
-        // When in edit mode AND mirror is active, CC0 and CC1 control mirror parameters
+        // Edit mode re-purposes a few faders. These overrides run first so the
+        // normal registry mapping never sees the CC.
         if (this.editModeActive && this.mirrorActive) {
             if (cc === this.mappings.vibrance.value) {
                 // CC0 -> Source shift (where to sample the mirror from)
-                this.onParameterChange('mirrorSplit', value);
-                this.updateUI('mirror-split-value', value.toFixed(2));
+                this.applyParam('mirrorSplit', value);
                 return;
             } else if (cc === this.mappings.hue.value) {
                 // CC1 -> Mirror segments (2 to 32 slices for kaleidoscope)
-                const segments = Math.round(2 + value * 30);
-                this.onParameterChange('mirrorSegments', segments);
-                this.updateUI('mirror-segments-value', segments);
+                this.applyParam('mirrorSegments', value);
                 return;
             }
         }
@@ -311,91 +310,33 @@ class MIDIController {
         // In edit mode, CC3 controls vertical shift
         if (this.editModeActive && cc === this.mappings.grayscale.value) {
             // Map 0-1 to -0.5 to 0.5 (shift range)
-            const shift = (value - 0.5);
-            this.onParameterChange('verticalShift', shift);
+            this.applyParam('verticalShift', value);
             return;
         }
 
-        if (cc === this.mappings.hue.value) {
-            // Map 0-1 to 0-360 degrees
-            const hue = value * 360;
-            this.onParameterChange('hue', hue);
-            this.updateUI('hue-value', hue.toFixed(1));
-        } else if (cc === this.mappings.saturation.value) {
-            this.onParameterChange('saturation', value);
-            this.updateUI('sat-value', value.toFixed(2));
-        } else if (cc === this.mappings.grayscale.value) {
-            this.onParameterChange('grayscale', value);
-            this.updateUI('gray-value', value.toFixed(2));
-        } else if (cc === this.mappings.contrast.value) {
-            // Map 0-1 to 0-2 for contrast range
-            const contrast = value * 2.0;
-            this.onParameterChange('contrast', contrast);
-            this.updateUI('contrast-value', contrast.toFixed(2));
-        } else if (cc === this.mappings.brightness.value) {
-            // Map 0-1 to 0-2 for brightness range
-            const brightness = value * 2.0;
-            this.onParameterChange('brightness', brightness);
-            this.updateUI('bright-value', brightness.toFixed(2));
-        } else if (cc === this.mappings.vibrance.value) {
-            this.onParameterChange('vibrance', value);
-            this.updateUI('vib-value', value.toFixed(2));
-        } else if (cc === this.mappings.shaderNext.value) {
-            if (value > 0.5) {  // Trigger on values above threshold
-                this.onShaderChange('next');
-            }
-        } else if (cc === this.mappings.shaderPrev.value) {
-            if (value > 0.5) {  // Trigger on values above threshold
-                this.onShaderChange('prev');
-            }
-        } else if (cc === this.mappings.zoom.value) {
-            // Map 0-1 to 0.1-5.0 zoom range
-            const zoom = 0.1 + value * 4.9;
-            this.onParameterChange('zoom', zoom);
-            this.updateUI('zoom-value', zoom.toFixed(2));
-        } else if (cc === this.mappings.speed.value) {
-            // Map 0-1 to 0-4 speed multiplier
-            const speed = value * 4.0;
-            this.onParameterChange('speed', speed);
-            this.updateUI('speed-value', speed.toFixed(2));
-        } else if (cc === this.mappings.mirror.value) {
-            // Toggle mirror at 0.5 threshold
-            const mirror = value > 0.5 ? 1.0 : 0.0;
-            this.mirrorActive = mirror > 0.5;
-            this.onParameterChange('mirror', mirror);
-            this.updateUI('mirror-value', mirror > 0.5 ? 'ON' : 'OFF');
-        } else if (cc === this.mappings.videoMix.value) {
-            this.onParameterChange('videoMix', value);
-            this.updateUI('video-mix-value', value.toFixed(2));
-        } else if (cc === this.mappings.audioIntensity.value) {
-            this.onParameterChange('audioIntensity', value);
-            this.updateUI('audio-intensity-value', value.toFixed(2));
-        } else if (cc === this.mappings.audioToHue.value) {
-            this.onParameterChange('audioToHue', value);
-        } else if (cc === this.mappings.audioToSaturation.value) {
-            this.onParameterChange('audioToSaturation', value);
-        } else if (cc === this.mappings.audioToBrightness.value) {
-            this.onParameterChange('audioToBrightness', value);
-        } else if (cc === this.mappings.audioToZoom.value) {
-            this.onParameterChange('audioToZoom', value);
-        } else if (cc === this.mappings.editMode.value) {
-            // Toggle edit mode at 0.5 threshold
-            if (value > 0.5) {
-                this.onParameterChange('editModeToggle', true);
-            }
-        } else if (cc === this.mappings.brushSize.value) {
-            // Map 0-1 to 5-200 brush size
-            const brushSize = Math.round(5 + value * 195);
-            this.onParameterChange('brushSize', brushSize);
-            this.updateUI('brush-size-value', brushSize);
-            const slider = document.getElementById('brush-size-slider');
-            if (slider) slider.value = brushSize;
+        // Momentary triggers fire once, on the way past the halfway point.
+        if (cc === TRIGGER_CCS.shaderNext) {
+            if (value > 0.5) this.onShaderChange('next');
+            return;
         }
+        if (cc === TRIGGER_CCS.shaderPrev) {
+            if (value > 0.5) this.onShaderChange('prev');
+            return;
+        }
+        if (cc === TRIGGER_CCS.editMode) {
+            if (value > 0.5) this.onParameterChange('editModeToggle', true);
+            return;
+        }
+
+        const param = PARAM_BY_CC.get(cc);
+        if (param) this.applyParam(param.name, value);
     }
 
-    updateUI(id, value) {
-        const element = document.getElementById(id);
-        if (element) element.textContent = value;
+    /** Convert a normalised MIDI value into the parameter's native range. */
+    applyParam(name, normalisedValue) {
+        const param = PARAM_BY_NAME.get(name);
+        if (!param) return;
+        this.onParameterChange(param.name, fromNorm(param, normalisedValue));
     }
 
     setEditModeActive(active) {
@@ -1043,9 +984,15 @@ class ShaderMIDIApp {
         this.shaderManager = new ShaderManager();
         this.renderer = new ShaderRenderer();
         this.midiController = null;
+        this.oscController = null;
+        this.ndiOutput = null;
         this.videoManager = null;
         this.audioManager = null;
         this.infoVisible = true;
+
+        // Current native value of every registry parameter, so OSC clients
+        // can ask for a full state dump at any time.
+        this.paramState = new Map(PARAMS.map(p => [p.name, p.def]));
 
         // Edit mode state
         this.editMode = false;
@@ -1103,6 +1050,33 @@ class ShaderMIDIApp {
         );
         await this.midiController.init();
 
+        // Initialize OSC (via the local bridge) as a full peer of MIDI
+        this.oscController = new OSCController(
+            {
+                onShaderChange: (action, data) => this.handleShaderChange(action, data),
+                onParameterChange: (param, value) => this.handleParameterChange(param, value),
+                onCommand: (action, data) => this.handleCommand(action, data),
+            },
+            {
+                log: (message) => Logger.osc(message),
+                onBridgeStatus: (status) => this.handleBridgeStatus(status),
+            }
+        );
+        this.oscController.init();
+
+        // Initialize NDI output (frames go out through the same bridge)
+        const osc = this.oscController;
+        this.ndiOutput = new NDIOutput(
+            this.renderer.renderer,
+            {
+                sendBinary: (buffer) => osc.sendBinary(buffer),
+                get bufferedAmount() { return osc.bufferedAmount; },
+            },
+            { log: (message) => Logger.ndi(message) }
+        );
+        this.ndiOutput.init();
+        this.setupOutputControls();
+
         // Initialize Video Manager
         this.videoManager = new VideoInputManager((texture) => {
             this.renderer.setVideoTexture(texture);
@@ -1138,19 +1112,90 @@ class ShaderMIDIApp {
     }
 
     handleShaderChange(action, data) {
+        const total = this.shaderManager.shaders.length;
+
         if (action === 'next') {
             this.shaderManager.nextShader();
         } else if (action === 'prev') {
             this.shaderManager.previousShader();
         } else if (action === 'index') {
             // Map MIDI note to shader index
-            const maxShaders = this.shaderManager.shaders.length;
-            const shaderIndex = Math.floor((data / 127) * maxShaders);
+            const shaderIndex = Math.floor((data / 127) * total);
             this.shaderManager.setShaderByIndex(shaderIndex);
+        } else if (action === 'absoluteIndex') {
+            // OSC: exact index, no scaling
+            this.shaderManager.setShaderByIndex(Math.max(0, Math.min(total - 1, Math.round(data))));
+        } else if (action === 'fraction') {
+            // OSC: 0..1 scans the whole set, for faders
+            const shaderIndex = Math.min(total - 1, Math.floor(data * total));
+            this.shaderManager.setShaderByIndex(Math.max(0, shaderIndex));
+        } else if (action === 'name') {
+            const index = this.shaderManager.shaders.findIndex(
+                name => name.toLowerCase() === data.toLowerCase()
+                    || name.replace(/\.[^.]+$/, '').toLowerCase() === data.toLowerCase()
+            );
+            if (index === -1) {
+                Logger.shader(`No shader named "${data}"`);
+                return;
+            }
+            this.shaderManager.setShaderByIndex(index);
         }
+
         this.loadCurrentShader();
+
+        if (this.oscController) {
+            this.oscController.sendShaderState(
+                this.shaderManager.shaders[this.shaderManager.currentIndex] || '',
+                this.shaderManager.currentIndex,
+                total
+            );
+        }
     }
 
+    handleBridgeStatus(status) {
+        const element = document.getElementById('ndi-receivers');
+        if (element && status.ndi) {
+            element.textContent = status.ndi.available
+                ? `${status.ndi.connections} receiver(s)`
+                : (status.ndi.reason || 'unavailable');
+        }
+    }
+
+    setupOutputControls() {
+        const toggle = document.getElementById('ndi-toggle');
+        const resolution = document.getElementById('ndi-resolution');
+        const fps = document.getElementById('ndi-fps');
+
+        if (toggle) {
+            toggle.addEventListener('click', () => {
+                const enabled = this.ndiOutput.setEnabled(!this.ndiOutput.enabled);
+                toggle.textContent = enabled ? 'Stop NDI Output' : 'Start NDI Output';
+                toggle.classList.toggle('active', enabled);
+            });
+        }
+
+        if (resolution) {
+            resolution.addEventListener('change', (e) => {
+                if (e.target.value === 'auto') {
+                    this.ndiOutput.setAutoResolution(true);
+                } else {
+                    const [width, height] = e.target.value.split('x').map(Number);
+                    this.ndiOutput.setResolution(width, height);
+                }
+            });
+        }
+
+        if (fps) {
+            fps.addEventListener('change', (e) => {
+                this.ndiOutput.setFps(Number(e.target.value));
+            });
+        }
+    }
+
+    /**
+     * Single entry point for every control surface (MIDI, OSC, UI widgets).
+     * `value` is always in the parameter's native range.
+     */
     handleParameterChange(param, value) {
         // Handle edit mode toggle specially
         if (param === 'editModeToggle') {
@@ -1158,20 +1203,152 @@ class ShaderMIDIApp {
             return;
         }
 
+        const definition = PARAM_BY_NAME.get(param);
+        if (definition) {
+            value = normaliseValue(definition, value);
+            this.paramState.set(param, value);
+        }
+
         // Handle brush size specially
         if (param === 'brushSize') {
             this.brushSize = value;
             this.updateBrushCursor();
+            const slider = document.getElementById('brush-size-slider');
+            if (slider) slider.value = value;
+            this.reflectParameter(definition, value);
             return;
+        }
+
+        // Mirror doubles as a mode switch for the edit-mode fader overrides.
+        if (param === 'mirror' && this.midiController) {
+            this.midiController.mirrorActive = value > 0.5;
         }
 
         this.renderer.updateGlobalParameter(param, value);
         Logger.system(`Parameter ${param} = ${typeof value === 'number' ? value.toFixed(2) : value}`);
 
+        this.reflectParameter(definition, value);
+
         // Automatische Kamera-Aktivierung basierend auf audioToHue
         if (param === 'audioToHue') {
             this.handleAudioToHueChange(value);
         }
+    }
+
+    /** Update the info overlay and echo the change to OSC listeners. */
+    reflectParameter(definition, value) {
+        if (!definition) return;
+        if (definition.ui) this.updateUI(definition.ui, formatValue(definition, value));
+        if (this.oscController) this.oscController.sendParameter(definition, value);
+    }
+
+    /**
+     * Commands that are not simple parameters — OSC's equivalent of the
+     * keyboard shortcuts and buttons.
+     */
+    handleCommand(action, data) {
+        switch (action) {
+            case 'toggleEditMode':
+                this.toggleEditMode();
+                break;
+            case 'setEditMode':
+                if (this.editMode !== data) this.toggleEditMode();
+                break;
+            case 'setEditTool':
+                if (this.editMode) this.setEditTool(data === 'polygon' ? 'polygon' : 'brush');
+                break;
+            case 'clearMask':
+                this.renderer.clearMask();
+                this.maskDirty = false;
+                this.renderer.setMaskActive(this.editMode);
+                Logger.system('Mask cleared');
+                break;
+            case 'undoMask':
+                if (this.renderer.undoMask()) {
+                    this.maskDirty = this.renderer.maskHistory.length > 0;
+                }
+                break;
+            case 'invertMask':
+                this.renderer.saveToHistory();
+                this.renderer.invertMask();
+                this.maskDirty = true;
+                this.renderer.setMaskActive(true);
+                Logger.system('Mask inverted');
+                break;
+            case 'resetPerspective':
+                this.resetPerspective();
+                break;
+            case 'setPerspectiveCorner':
+                this.setPerspectiveCorner(data.corner, data.x, data.y);
+                break;
+            case 'toggleFullscreen':
+                this.toggleFullscreen();
+                break;
+            case 'toggleInfo':
+                this.toggleInfo();
+                break;
+            case 'setNDIEnabled':
+                if (this.ndiOutput) this.ndiOutput.setEnabled(data);
+                break;
+            case 'setNDIFps':
+                if (this.ndiOutput) this.ndiOutput.setFps(data);
+                break;
+            case 'setNDIResolution':
+                if (this.ndiOutput) this.ndiOutput.setResolution(data.width, data.height);
+                break;
+            case 'listShaders':
+                Logger.shader('Shaders:', this.shaderManager.shaders);
+                break;
+            case 'requestFullState':
+                this.broadcastFullState();
+                break;
+            default:
+                Logger.system(`Unknown command: ${action}`);
+        }
+    }
+
+    /** Push every parameter and the current shader out over OSC. */
+    broadcastFullState() {
+        if (!this.oscController) return;
+        for (const param of PARAMS) {
+            const value = this.paramState.has(param.name)
+                ? this.paramState.get(param.name)
+                : param.def;
+            this.oscController.sendParameter(param, value);
+        }
+        this.oscController.sendShaderState(
+            this.shaderManager.shaders[this.shaderManager.currentIndex] || '',
+            this.shaderManager.currentIndex,
+            this.shaderManager.shaders.length
+        );
+        this.oscController.sendEditState(this.editMode);
+        Logger.osc('Full state sent');
+    }
+
+    /** Move one perspective corner. Coordinates are normalised 0..1. */
+    setPerspectiveCorner(corner, x, y) {
+        if (!this.perspectiveCorners[corner]) return;
+        this.perspectiveCorners[corner] = {
+            x: Math.min(1, Math.max(0, x)),
+            y: Math.min(1, Math.max(0, y)),
+        };
+        this.perspectiveDirty = true;
+        this.updatePerspectiveUniforms();
+        this.updatePerspectiveHandlePositions();
+        Logger.system(`Perspective ${corner} = ${x.toFixed(3)}, ${y.toFixed(3)}`);
+    }
+
+    /** Sync the draggable handle elements to the current corner values. */
+    updatePerspectiveHandlePositions() {
+        this.perspectiveHandles.forEach(handle => {
+            const corner = this.perspectiveCorners[handle.dataset.corner];
+            if (!corner) return;
+            handle.style.left = `${corner.x * window.innerWidth}px`;
+            handle.style.top = `${corner.y * window.innerHeight}px`;
+            handle.style.right = 'auto';
+            handle.style.bottom = 'auto';
+        });
+        if (this.showPerspGrid) this.drawPerspectiveGrid();
     }
 
     async handleAudioToHueChange(audioToHueValue) {
@@ -1850,6 +2027,8 @@ class ShaderMIDIApp {
         }
         // If mask is dirty, always keep it active
 
+        if (this.oscController) this.oscController.sendEditState(this.editMode);
+
         Logger.system(`Edit mode: ${this.editMode ? 'ON' : 'OFF'}`);
     }
 
@@ -1957,6 +2136,8 @@ class ShaderMIDIApp {
     animate() {
         requestAnimationFrame(() => this.animate());
         this.renderer.render();
+        // Must run while this frame is still in the drawing buffer.
+        if (this.ndiOutput) this.ndiOutput.capture();
     }
 }
 
@@ -1964,4 +2145,6 @@ class ShaderMIDIApp {
 // Start the application
 // ============================================
 const app = new ShaderMIDIApp();
+// Exposed for console debugging and automated checks.
+window.__shaderApp = app;
 app.init();
